@@ -1,0 +1,1427 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Printer, Download, Tag, Upload, Save } from 'lucide-react';
+
+const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
+const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
+const SNAPSHOT_KEY = 'shift_manager_snapshots_v1';
+const MAX_SNAPSHOTS = 10;
+const MASTER_PASSWORD_KEY = 'shift_manager_master_password_v1';
+
+const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+const DEFAULT_CATEGORIES = ['シャンプー', 'カラー', 'ブロー', 'カット'];
+
+function getMonthDates(year, month) {
+  const dates = [];
+  const last = new Date(year, month + 1, 0).getDate();
+  for (let d = 1; d <= last; d++) dates.push(new Date(year, month, d));
+  return dates;
+}
+
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function fmtMonthLabel(year, month) {
+  return `${year}年${month + 1}月`;
+}
+
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
+const MINUTE_OPTIONS = ['00', '15', '30', '45'];
+
+function splitTime(t) {
+  const [h, m] = (t || '10:00').split(':');
+  return { h, m };
+}
+function joinTime(h, m) {
+  return `${h}:${m}`;
+}
+
+function icsDate(d, timeStr) {
+  const [h, m] = (timeStr || '10:00').split(':').map(Number);
+  const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m, 0);
+  const pad = n => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+}
+
+function buildIcs(practiceDays, year, month, trainers, assistants, personId, personType) {
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ShiftManager//JP'];
+  Object.entries(practiceDays).forEach(([ds, day]) => {
+    const [y, m, dd] = ds.split('-').map(Number);
+    if (y !== year || m !== month + 1) return;
+    const d = new Date(y, m - 1, dd);
+    (day.sessions || []).forEach((session, idx) => {
+      const list = personType === 'trainer' ? session.assigned?.trainers : session.assigned?.assistants;
+      if (personId && !(list || []).includes(personId)) return;
+      const tIds = [...(session.assigned?.trainers || [])].sort((a, b) => trainers.findIndex(t => t.id === a) - trainers.findIndex(t => t.id === b));
+      const aIds = [...(session.assigned?.assistants || [])].sort((a, b) => assistants.findIndex(t => t.id === a) - assistants.findIndex(t => t.id === b));
+      const tNames = tIds.map(id => trainers.find(t => t.id === id)?.name).filter(Boolean).join('、');
+      const aNames = aIds.map(id => assistants.find(a => a.id === id)?.name).filter(Boolean).join('、');
+      lines.push('BEGIN:VEVENT');
+      lines.push(`UID:${ds}-session${idx}@shiftmanager`);
+      lines.push(`DTSTART:${icsDate(d, session.startTime)}`);
+      lines.push(`DTEND:${icsDate(d, session.endTime)}`);
+      lines.push(`SUMMARY:${session.category || '練習会'}`);
+      lines.push(`DESCRIPTION:トレーナー: ${tNames || 'なし'}\\nアシスタント: ${aNames || 'なし'}`);
+      lines.push('END:VEVENT');
+    });
+  });
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+function downloadIcs(content, filename) {
+  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function newSession(category) {
+  return {
+    id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+    category: category || 'シャンプー',
+    startTime: '10:00',
+    endTime: '10:45',
+    trainerAvail: [],
+    assistantAvail: [],
+    assigned: { trainers: [], assistants: [] }
+  };
+}
+
+export default function ShiftManager() {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
+  const [tab, setTab] = useState('shift');
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [workspaces, setWorkspaces] = useState([]); // [{id, name, password}]
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(null);
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+  const [editingWorkspaceName, setEditingWorkspaceName] = useState(false);
+  const [workspaceNameInput, setWorkspaceNameInput] = useState('');
+
+  const [unlockedWorkspaces, setUnlockedWorkspaces] = useState({}); // { [workspaceId]: true }
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [showSetPassword, setShowSetPassword] = useState(false);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState('');
+  const [snapshotList, setSnapshotList] = useState([]);
+  const [draggedWorkspaceId, setDraggedWorkspaceId] = useState(null);
+  const [draggedTrainerId, setDraggedTrainerId] = useState(null);
+
+  const [masterPassword, setMasterPassword] = useState('');
+  const [masterPasswordLoaded, setMasterPasswordLoaded] = useState(false);
+  const [isMasterUnlocked, setIsMasterUnlocked] = useState(false);
+  const [showMasterPrompt, setShowMasterPrompt] = useState(false);
+  const [masterPasswordInput, setMasterPasswordInput] = useState('');
+  const [masterPasswordError, setMasterPasswordError] = useState('');
+  const [showSetMasterPassword, setShowSetMasterPassword] = useState(false);
+  const [newMasterPasswordInput, setNewMasterPasswordInput] = useState('');
+
+  const [trainers, setTrainers] = useState([]);
+  const [assistants, setAssistants] = useState([]);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [practiceDays, setPracticeDays] = useState({}); // dateStr -> { sessions: [ {id, category, startTime, endTime, trainerAvail, assistantAvail, assigned} ] }
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState('trainer');
+  const [newCategory, setNewCategory] = useState('');
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  // Load workspace list (and migrate legacy single-workspace data if present)
+  useEffect(() => {
+    async function loadWorkspaces() {
+      let list = [];
+      try {
+        const res = await window.storage.get(WORKSPACE_LIST_KEY);
+        if (res && res.value) list = JSON.parse(res.value);
+      } catch (e) { /* none yet */ }
+
+      if (list.length === 0) {
+        // try migrating legacy v2 single-workspace data into Workspace A
+        let migratedData = null;
+        try {
+          const legacy = await window.storage.get('shift_manager_data_v2');
+          if (legacy && legacy.value) migratedData = JSON.parse(legacy.value);
+        } catch (e) { /* nothing */ }
+
+        const firstId = 'ws_' + Date.now().toString();
+        list = [{ id: firstId, name: 'A' }];
+        try {
+          await window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(list));
+          if (migratedData) {
+            await window.storage.set(workspaceDataKey(firstId), JSON.stringify(migratedData));
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      setWorkspaces(list);
+      setWorkspacesLoaded(true);
+    }
+    loadWorkspaces();
+
+    async function loadMasterPassword() {
+      try {
+        const res = await window.storage.get(MASTER_PASSWORD_KEY);
+        if (res && res.value) {
+          setMasterPassword(res.value);
+        } else {
+          // 初回利用時のみデフォルトの管理者パスワードを設定する
+          const defaultPw = '1111';
+          await window.storage.set(MASTER_PASSWORD_KEY, defaultPw);
+          setMasterPassword(defaultPw);
+        }
+      } catch (e) {
+        setMasterPassword('');
+      }
+      setMasterPasswordLoaded(true);
+    }
+    loadMasterPassword();
+  }, []);
+
+  // Load data for the active workspace whenever it changes
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    setLoaded(false);
+    setSelectedDate(null);
+    async function load() {
+      try {
+        const res = await window.storage.get(workspaceDataKey(activeWorkspaceId));
+        if (res && res.value) {
+          const data = JSON.parse(res.value);
+          setTrainers(data.trainers || []);
+          setAssistants(data.assistants || []);
+          setCategories(data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES);
+          setPracticeDays(data.practiceDays || {});
+        } else {
+          setTrainers([]);
+          setAssistants([]);
+          setCategories(DEFAULT_CATEGORIES);
+          setPracticeDays({});
+        }
+      } catch (e) {
+        setTrainers([]);
+        setAssistants([]);
+        setCategories(DEFAULT_CATEGORIES);
+        setPracticeDays({});
+      }
+      setLoaded(true);
+    }
+    load();
+  }, [activeWorkspaceId]);
+
+  const persist = useCallback(async (workspaceId, next) => {
+    if (!workspaceId) return;
+    setSaving(true);
+    try {
+      await window.storage.set(workspaceDataKey(workspaceId), JSON.stringify(next));
+    } catch (e) {
+      console.error('保存に失敗しました', e);
+    }
+    setSaving(false);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || !activeWorkspaceId) return;
+    persist(activeWorkspaceId, { trainers, assistants, categories, practiceDays });
+  }, [trainers, assistants, categories, practiceDays, loaded, activeWorkspaceId, persist]);
+
+  // 自動スナップショット：全ワークスペースの状態を定期的にブラウザ内へ複数世代保存する
+  const takeSnapshot = useCallback(async () => {
+    try {
+      const listRes = await window.storage.get(WORKSPACE_LIST_KEY);
+      const wsList = listRes && listRes.value ? JSON.parse(listRes.value) : [];
+      if (wsList.length === 0) return;
+
+      const data = {};
+      for (const w of wsList) {
+        try {
+          const res = await window.storage.get(workspaceDataKey(w.id));
+          data[w.id] = res && res.value ? JSON.parse(res.value) : null;
+        } catch (e) { data[w.id] = null; }
+      }
+
+      let snapshots = [];
+      try {
+        const snapRes = await window.storage.get(SNAPSHOT_KEY);
+        if (snapRes && snapRes.value) snapshots = JSON.parse(snapRes.value);
+      } catch (e) { /* none yet */ }
+
+      const snapshotStr = JSON.stringify({ workspaces: wsList, data });
+      const lastStr = snapshots.length > 0 ? JSON.stringify({ workspaces: snapshots[snapshots.length - 1].workspaces, data: snapshots[snapshots.length - 1].data }) : null;
+      if (snapshotStr === lastStr) return; // 変化がなければ世代を増やさない
+
+      snapshots.push({ takenAt: new Date().toISOString(), workspaces: wsList, data });
+      if (snapshots.length > MAX_SNAPSHOTS) snapshots = snapshots.slice(snapshots.length - MAX_SNAPSHOTS);
+
+      await window.storage.set(SNAPSHOT_KEY, JSON.stringify(snapshots));
+    } catch (e) {
+      console.error('自動バックアップに失敗しました', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    takeSnapshot();
+    const interval = setInterval(takeSnapshot, 60000);
+    return () => clearInterval(interval);
+  }, [takeSnapshot]);
+
+  function persistWorkspaceList(next) {
+    setWorkspaces(next);
+    window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(next)).catch(e => console.error(e));
+  }
+
+  async function openSnapshots() {
+    try {
+      const res = await window.storage.get(SNAPSHOT_KEY);
+      const snapshots = res && res.value ? JSON.parse(res.value) : [];
+      setSnapshotList([...snapshots].reverse());
+      setShowSnapshots(true);
+    } catch (e) {
+      setSnapshotList([]);
+      setShowSnapshots(true);
+    }
+  }
+
+  function handleWorkspaceDragStart(id) {
+    setDraggedWorkspaceId(id);
+  }
+
+  function handleWorkspaceDragOver(e, overId) {
+    e.preventDefault();
+    if (!draggedWorkspaceId || draggedWorkspaceId === overId) return;
+    const fromIdx = workspaces.findIndex(w => w.id === draggedWorkspaceId);
+    const toIdx = workspaces.findIndex(w => w.id === overId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = [...workspaces];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setWorkspaces(next);
+  }
+
+  function handleWorkspaceDragEnd() {
+    if (draggedWorkspaceId) {
+      persistWorkspaceList(workspaces);
+    }
+    setDraggedWorkspaceId(null);
+  }
+
+  async function restoreFromSnapshot(snapshot) {
+    for (const w of snapshot.workspaces) {
+      const wsData = snapshot.data[w.id];
+      if (wsData) {
+        await window.storage.set(workspaceDataKey(w.id), JSON.stringify(wsData));
+      }
+    }
+    await window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(snapshot.workspaces));
+    setWorkspaces(snapshot.workspaces);
+    setActiveWorkspaceId(null);
+    setShowSnapshots(false);
+    setRestoreMessage(`${new Date(snapshot.takenAt).toLocaleString('ja-JP')}の状態に復元しました。`);
+  }
+
+  async function exportAllData() {
+    const allData = { workspaces, data: {} };
+    for (const w of workspaces) {
+      try {
+        const res = await window.storage.get(workspaceDataKey(w.id));
+        allData.data[w.id] = res && res.value ? JSON.parse(res.value) : null;
+      } catch (e) {
+        allData.data[w.id] = null;
+      }
+    }
+    downloadJson(allData, `シフト管理バックアップ_${fmtDate(new Date())}.json`);
+  }
+
+  async function importAllData(file) {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed.workspaces || !parsed.data) {
+        alert('このファイルの形式が正しくありません。');
+        return;
+      }
+      for (const w of parsed.workspaces) {
+        const wsData = parsed.data[w.id];
+        if (wsData) {
+          await window.storage.set(workspaceDataKey(w.id), JSON.stringify(wsData));
+        }
+      }
+      await window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(parsed.workspaces));
+      setWorkspaces(parsed.workspaces);
+      setActiveWorkspaceId(parsed.workspaces[0]?.id || null);
+      alert('復元が完了しました。');
+    } catch (e) {
+      console.error(e);
+      alert('復元に失敗しました。ファイルを確認してください。');
+    }
+  }
+
+  function addWorkspace() {
+    const usedLetters = workspaces.map(w => w.name);
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    const nextLetter = letters.find(l => !usedLetters.includes(l)) || `グループ${workspaces.length + 1}`;
+    const id = 'ws_' + Date.now().toString();
+    const next = [...workspaces, { id, name: nextLetter, password: '' }];
+    persistWorkspaceList(next);
+    setActiveWorkspaceId(id);
+    // 自分が今作ったワークスペースはそのまま編集可能にする
+    setUnlockedWorkspaces(prev => ({ ...prev, [id]: true }));
+  }
+
+  function removeWorkspace(id) {
+    if (workspaces.length <= 1) return;
+    const next = workspaces.filter(w => w.id !== id);
+    persistWorkspaceList(next);
+    if (activeWorkspaceId === id) setActiveWorkspaceId(null);
+    window.storage.delete(workspaceDataKey(id)).catch(() => {});
+  }
+
+  function startRenameWorkspace() {
+    const current = workspaces.find(w => w.id === activeWorkspaceId);
+    setWorkspaceNameInput(current?.name || '');
+    setEditingWorkspaceName(true);
+  }
+
+  function confirmRenameWorkspace() {
+    if (!workspaceNameInput.trim()) { setEditingWorkspaceName(false); return; }
+    const next = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, name: workspaceNameInput.trim() } : w);
+    persistWorkspaceList(next);
+    setEditingWorkspaceName(false);
+  }
+
+  const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId);
+  const hasPassword = !!activeWorkspace?.password;
+  const hasMasterAccess = !masterPassword || isMasterUnlocked;
+  const isUnlocked = hasMasterAccess || !hasPassword || !!unlockedWorkspaces[activeWorkspaceId];
+
+  function attemptUnlock() {
+    if (passwordInput === activeWorkspace?.password) {
+      setUnlockedWorkspaces(prev => ({ ...prev, [activeWorkspaceId]: true }));
+      setShowPasswordPrompt(false);
+      setPasswordInput('');
+      setPasswordError('');
+    } else {
+      setPasswordError('パスワードが正しくありません');
+    }
+  }
+
+  function lockWorkspace() {
+    setUnlockedWorkspaces(prev => {
+      const next = { ...prev };
+      delete next[activeWorkspaceId];
+      return next;
+    });
+  }
+
+  function setWorkspacePassword() {
+    const next = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, password: newPasswordInput } : w);
+    persistWorkspaceList(next);
+    setShowSetPassword(false);
+    setNewPasswordInput('');
+    // 設定した本人はそのまま編集可能のままにしておく
+    setUnlockedWorkspaces(prev => ({ ...prev, [activeWorkspaceId]: true }));
+  }
+
+  function attemptMasterUnlock() {
+    if (masterPasswordInput === masterPassword) {
+      setIsMasterUnlocked(true);
+      setShowMasterPrompt(false);
+      setMasterPasswordInput('');
+      setMasterPasswordError('');
+    } else {
+      setMasterPasswordError('パスワードが正しくありません');
+    }
+  }
+
+  function logoutMaster() {
+    setIsMasterUnlocked(false);
+  }
+
+  function saveMasterPassword() {
+    window.storage.set(MASTER_PASSWORD_KEY, newMasterPasswordInput).catch(e => console.error(e));
+    setMasterPassword(newMasterPasswordInput);
+    setShowSetMasterPassword(false);
+    setNewMasterPasswordInput('');
+    setIsMasterUnlocked(true);
+  }
+
+  const dates = getMonthDates(year, month);
+
+  function changeMonth(delta) {
+    let m = month + delta, y = year;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setMonth(m); setYear(y);
+  }
+
+  function addPerson() {
+    if (!newName.trim()) return;
+    const person = { id: Date.now().toString(), name: newName.trim() };
+    if (newType === 'trainer') setTrainers(prev => [...prev, person]);
+    else setAssistants(prev => [...prev, person]);
+    setNewName('');
+  }
+
+  function removePerson(id, type) {
+    if (type === 'trainer') setTrainers(prev => prev.filter(p => p.id !== id));
+    else setAssistants(prev => prev.filter(p => p.id !== id));
+  }
+
+  function handleTrainerDragStart(id) {
+    setDraggedTrainerId(id);
+  }
+
+  function handleTrainerDragOver(e, overId) {
+    e.preventDefault();
+    if (!draggedTrainerId || draggedTrainerId === overId) return;
+    const fromIdx = trainers.findIndex(t => t.id === draggedTrainerId);
+    const toIdx = trainers.findIndex(t => t.id === overId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = [...trainers];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setTrainers(next);
+  }
+
+  function handleTrainerDragEnd() {
+    setDraggedTrainerId(null);
+  }
+
+  function addCategory() {
+    if (!newCategory.trim() || categories.includes(newCategory.trim())) { setNewCategory(''); return; }
+    setCategories(prev => [...prev, newCategory.trim()]);
+    setNewCategory('');
+  }
+
+  function removeCategory(cat) {
+    setCategories(prev => prev.filter(c => c !== cat));
+  }
+
+  function selectDate(dateStr) {
+    setSelectedDate(dateStr);
+  }
+
+  function deletePracticeDay(dateStr) {
+    setPracticeDays(prev => {
+      const next = { ...prev };
+      delete next[dateStr];
+      return next;
+    });
+    setSelectedDate(null);
+  }
+
+  function addSession(dateStr) {
+    setPracticeDays(prev => {
+      const day = prev[dateStr];
+      if (!day) {
+        return { ...prev, [dateStr]: { sessions: [newSession(categories[0])] } };
+      }
+      return { ...prev, [dateStr]: { ...day, sessions: [...day.sessions, newSession(categories[0])] } };
+    });
+  }
+
+  function removeSession(dateStr, sessionId) {
+    setPracticeDays(prev => {
+      const day = prev[dateStr];
+      if (!day) return prev;
+      const sessions = day.sessions.filter(s => s.id !== sessionId);
+      if (sessions.length === 0) {
+        const next = { ...prev };
+        delete next[dateStr];
+        return next;
+      }
+      return { ...prev, [dateStr]: { ...day, sessions } };
+    });
+    setSelectedDate(prevSel => {
+      const day = practiceDays[dateStr];
+      if (day && day.sessions.length === 1) return null;
+      return prevSel;
+    });
+  }
+
+  function updateSession(dateStr, sessionId, patch) {
+    setPracticeDays(prev => {
+      const day = prev[dateStr];
+      if (!day) return prev;
+      const sessions = day.sessions.map(s => s.id === sessionId ? { ...s, ...patch } : s);
+      return { ...prev, [dateStr]: { ...day, sessions } };
+    });
+  }
+
+  function toggleAvail(dateStr, sessionId, personId, type) {
+    setPracticeDays(prev => {
+      const day = prev[dateStr];
+      if (!day) return prev;
+      const key = type === 'trainer' ? 'trainerAvail' : 'assistantAvail';
+      const sessions = day.sessions.map(s => {
+        if (s.id !== sessionId) return s;
+        const list = s[key] || [];
+        const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
+        return { ...s, [key]: next };
+      });
+      return { ...prev, [dateStr]: { ...day, sessions } };
+    });
+  }
+
+  function toggleAssigned(dateStr, sessionId, personId, type) {
+    setPracticeDays(prev => {
+      const day = prev[dateStr];
+      if (!day) return prev;
+      const key = type === 'trainer' ? 'trainers' : 'assistants';
+      const sessions = day.sessions.map(s => {
+        if (s.id !== sessionId) return s;
+        const list = s.assigned?.[key] || [];
+        const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
+        return { ...s, assigned: { ...s.assigned, [key]: next } };
+      });
+      return { ...prev, [dateStr]: { ...day, sessions } };
+    });
+  }
+
+  // Auto-assign across all sessions in the month, balancing counts per person
+  function autoAssign() {
+    const practiceDateStrs = Object.keys(practiceDays).filter(ds => {
+      const [y, m] = ds.split('-').map(Number);
+      return y === year && m === month + 1;
+    }).sort();
+
+    const trainerCounts = {};
+    trainers.forEach(t => trainerCounts[t.id] = 0);
+    const assistantCounts = {};
+    assistants.forEach(a => assistantCounts[a.id] = 0);
+
+    const next = { ...practiceDays };
+
+    practiceDateStrs.forEach(ds => {
+      const day = next[ds];
+      const sessions = day.sessions.map(session => {
+        const allTrainerIds = trainers.map(t => t.id);
+        const sortedTrainers = [...allTrainerIds].sort((a, b) => trainerCounts[a] - trainerCounts[b]);
+        const assignedTrainers = sortedTrainers.slice(0, Math.min(1, sortedTrainers.length));
+        assignedTrainers.forEach(id => trainerCounts[id] = (trainerCounts[id] || 0) + 1);
+
+        return { ...session, assigned: { trainers: assignedTrainers, assistants: session.assigned?.assistants || [] } };
+      });
+      next[ds] = { ...day, sessions };
+    });
+
+    setPracticeDays(next);
+  }
+
+  function nameById(id, type) {
+    const list = type === 'trainer' ? trainers : assistants;
+    return list.find(p => p.id === id)?.name || '?';
+  }
+
+  // 選択した順番ではなく、トレーナー・アシスタント一覧の並び順（ランク順）で表示するための並べ替え
+  function sortIdsByRank(ids, type) {
+    const list = type === 'trainer' ? trainers : assistants;
+    return [...(ids || [])].sort((a, b) => list.findIndex(p => p.id === a) - list.findIndex(p => p.id === b));
+  }
+
+  const trainerMonthCounts = trainers.map(t => {
+    let count = 0;
+    Object.entries(practiceDays).forEach(([ds, day]) => {
+      const [y, m] = ds.split('-').map(Number);
+      if (y !== year || m !== month + 1) return;
+      (day.sessions || []).forEach(s => { if (s.assigned?.trainers?.includes(t.id)) count++; });
+    });
+    return { ...t, count };
+  });
+
+  const assistantMonthCounts = assistants.map(a => {
+    let count = 0;
+    Object.entries(practiceDays).forEach(([ds, day]) => {
+      const [y, m] = ds.split('-').map(Number);
+      if (y !== year || m !== month + 1) return;
+      (day.sessions || []).forEach(s => { if (s.assigned?.assistants?.includes(a.id)) count++; });
+    });
+    return { ...a, count };
+  });
+
+  if (!workspacesLoaded || (activeWorkspaceId && !loaded)) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', color: '#8a8378', fontFamily: 'system-ui' }}>
+        読み込み中…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      fontFamily: "'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif",
+      background: '#FAF8F4',
+      minHeight: '600px',
+      color: '#2B2823',
+      padding: '24px',
+      maxWidth: '100%',
+      boxSizing: 'border-box'
+    }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { height: 6px; width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #D8D2C4; border-radius: 4px; }
+        button { font-family: inherit; }
+        input, select { font-family: inherit; }
+        @media print {
+          .no-print { display: none !important; }
+          body { background: #fff !important; }
+          .print-only { display: flex !important; }
+        }
+        .print-only { display: none; }
+      `}</style>
+
+      <div className="print-only" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px' }}>
+        練習会シフト　{workspaces.find(w => w.id === activeWorkspaceId)?.name || ''}　{fmtMonthLabel(year, month)}
+      </div>
+
+      {!activeWorkspaceId ? (
+        <div style={{ maxWidth: '480px', margin: '40px auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+            {masterPasswordLoaded && !hasMasterAccess && (
+              <button onClick={() => { setShowMasterPrompt(true); setMasterPasswordError(''); setMasterPasswordInput(''); }} style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#2B2823', fontWeight: 600, cursor: 'pointer' }}>
+                総管理者ログイン
+              </button>
+            )}
+            {hasMasterAccess && masterPassword && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', background: '#EAF1ED', color: '#2B4A3A', fontWeight: 700 }}>
+                  総管理者モード
+                </span>
+                <button onClick={logoutMaster} style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', fontWeight: 600, cursor: 'pointer' }}>
+                  ログアウト
+                </button>
+              </div>
+            )}
+          </div>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, margin: '0 0 6px', letterSpacing: '0.02em', color: '#1F1C18', textAlign: 'center' }}>
+            練習会シフト管理
+          </h1>
+          <div style={{ fontSize: '13px', color: '#9C9486', marginBottom: '24px', textAlign: 'center' }}>
+            店舗（シフト）を選んでください
+          </div>
+
+          {restoreMessage && (
+            <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '10px', background: '#EAF1ED', border: '1px solid #C9DDD0', fontSize: '12px', color: '#2B4A3A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+              <span>{restoreMessage}</span>
+              <button onClick={() => setRestoreMessage('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2B4A3A' }}>
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {!hasMasterAccess && (
+            <div style={{ marginBottom: '20px' }}>
+              <select
+                value=""
+                onChange={e => { if (e.target.value) setActiveWorkspaceId(e.target.value); }}
+                style={{
+                  width: '100%', padding: '16px 18px', borderRadius: '12px',
+                  border: '1px solid #E2DCCC', background: '#FFFFFF',
+                  color: '#1F1C18', fontSize: '15px', fontWeight: 700, cursor: 'pointer'
+                }}
+              >
+                <option value="" disabled>店舗選択</option>
+                {workspaces.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}{w.password ? '（編集に制限あり）' : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {hasMasterAccess && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {workspaces.map(w => (
+              <div
+                key={w.id}
+                draggable={hasMasterAccess}
+                onDragStart={() => hasMasterAccess && handleWorkspaceDragStart(w.id)}
+                onDragOver={(e) => hasMasterAccess && handleWorkspaceDragOver(e, w.id)}
+                onDragEnd={() => hasMasterAccess && handleWorkspaceDragEnd()}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                  borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF',
+                  opacity: draggedWorkspaceId === w.id ? 0.5 : 1
+                }}
+              >
+                {hasMasterAccess && (
+                  <div style={{ padding: '0 4px 0 12px', cursor: 'grab', color: '#C9C2B2', fontSize: '16px', lineHeight: 1, userSelect: 'none' }} title="ドラッグして並べ替え">⠿</div>
+                )}
+                <button
+                  onClick={() => setActiveWorkspaceId(w.id)}
+                  style={{
+                    flex: 1, padding: '16px 18px', borderRadius: '12px',
+                    border: 'none', background: 'transparent',
+                    color: '#1F1C18', fontSize: '15px', fontWeight: 700,
+                    cursor: 'pointer', textAlign: 'left',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                  }}
+                >
+                  {w.name}
+                  <span style={{ fontSize: '12px', color: '#B0A99A', fontWeight: 500 }}>{w.password ? '編集に制限あり' : ''}</span>
+                </button>
+              </div>
+            ))}
+            {hasMasterAccess && (
+              <button onClick={addWorkspace} style={{ padding: '14px 18px', borderRadius: '12px', border: '1px dashed #C9C2B2', background: 'transparent', color: '#8A8378', fontSize: '14px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <Plus size={16} /> 新しい店舗（シフト）を追加
+              </button>
+            )}
+          </div>
+          )}
+
+          {hasMasterAccess && (
+            <div style={{ marginTop: '24px', textAlign: 'center' }}>
+              <button onClick={() => { setShowSetMasterPassword(true); setNewMasterPasswordInput(masterPassword); }} style={{ fontSize: '11px', color: '#9C9486', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                {masterPassword ? '管理者パスワードを変更' : '管理者パスワードを設定する'}
+              </button>
+            </div>
+          )}
+
+          {hasMasterAccess && (
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderRadius: '10px', background: '#FFF8EC', border: '1px solid #F0E0BE', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '11px', color: '#8A7A52' }}>定期的にバックアップの保存をおすすめします</span>
+            <button onClick={exportAllData} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer', color: '#2B2823' }}>
+              <Save size={13} /> バックアップを保存
+            </button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer', color: '#2B2823' }}>
+              <Upload size={13} /> バックアップから復元
+              <input type="file" accept="application/json" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) importAllData(e.target.files[0]); e.target.value = ''; }} />
+            </label>
+            <button onClick={openSnapshots} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer', color: '#2B2823' }}>
+              自動保存された履歴を見る
+            </button>
+          </div>
+          )}
+        </div>
+      ) : (
+      <>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <button onClick={() => setActiveWorkspaceId(null)} className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#9C9486', background: 'none', border: 'none', cursor: 'pointer', marginBottom: '4px', padding: 0 }}>
+            <ChevronLeft size={12} /> 店舗選択に戻る
+          </button>
+          <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, letterSpacing: '0.02em', color: '#1F1C18' }}>
+            {workspaces.find(w => w.id === activeWorkspaceId)?.name}　練習会シフト管理
+          </h1>
+          <div style={{ fontSize: '12px', color: '#9C9486', marginTop: '2px' }}>
+            {saving ? '保存中…' : '自動保存済み'}
+          </div>
+        </div>
+        <div className="no-print" style={{ display: 'flex', gap: '4px', background: '#EFEAE0', borderRadius: '10px', padding: '4px' }}>
+          {[
+            { key: 'shift', label: 'シフト', icon: Calendar },
+            { key: 'people', label: '人員登録', icon: Users },
+            { key: 'categories', label: '練習項目', icon: Tag },
+          ].map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '8px 16px', borderRadius: '8px', border: 'none',
+                background: tab === key ? '#FFFFFF' : 'transparent',
+                color: tab === key ? '#1F1C18' : '#8A8378',
+                fontWeight: tab === key ? 600 : 500,
+                fontSize: '13px', cursor: 'pointer',
+                boxShadow: tab === key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                transition: 'all 0.15s'
+              }}
+            >
+              <Icon size={14} /> {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Permission bar */}
+      <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', flexWrap: 'wrap', padding: '10px 14px', borderRadius: '10px', background: isUnlocked ? '#EAF1ED' : '#F3EFE6', border: isUnlocked ? '1px solid #C9DDD0' : '1px solid #E5DCC8' }}>
+        {isUnlocked ? (
+          <>
+            <span style={{ fontSize: '12px', color: '#2B4A3A', fontWeight: 600 }}>
+              {hasMasterAccess && masterPassword ? '総管理者モード（編集できます）' : '店舗管理者モード（編集できます）'}
+            </span>
+            {hasPassword && !(hasMasterAccess && masterPassword) && (
+              <button onClick={lockWorkspace} style={{ fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #C9DDD0', background: '#FFFFFF', color: '#2B4A3A', cursor: 'pointer' }}>
+                店舗管理者ログアウト
+              </button>
+            )}
+            {hasMasterAccess && masterPassword && (
+              <button onClick={logoutMaster} style={{ fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #C9DDD0', background: '#FFFFFF', color: '#2B4A3A', cursor: 'pointer' }}>
+                総管理者ログアウト
+              </button>
+            )}
+            <button onClick={() => { setShowSetPassword(true); setNewPasswordInput(activeWorkspace?.password || ''); }} style={{ fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #C9DDD0', background: '#FFFFFF', color: '#2B4A3A', cursor: 'pointer' }}>
+              {hasPassword ? '編集パスワードを変更' : '編集パスワードを設定する'}
+            </button>
+            {hasMasterAccess && activeWorkspaceId && !editingWorkspaceName && (
+              <button onClick={startRenameWorkspace} style={{ fontSize: '12px', color: '#5A6E62', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                名前を変更
+              </button>
+            )}
+            {editingWorkspaceName && (
+              <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  autoFocus
+                  value={workspaceNameInput}
+                  onChange={e => setWorkspaceNameInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && confirmRenameWorkspace()}
+                  style={{ fontSize: '12px', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2DCCC', width: '100px' }}
+                />
+                <button onClick={confirmRenameWorkspace} style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', cursor: 'pointer' }}>保存</button>
+              </span>
+            )}
+            {hasMasterAccess && workspaces.length > 1 && activeWorkspaceId && (
+              <button onClick={() => removeWorkspace(activeWorkspaceId)} title="このシフトを削除" style={{ fontSize: '12px', color: '#B0746A', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Trash2 size={12} /> このシフトを削除
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: '12px', color: '#8A7A52', fontWeight: 600 }}>閲覧モード（編集には店舗管理者ログインが必要です）</span>
+            <button onClick={() => { setShowPasswordPrompt(true); setPasswordError(''); setPasswordInput(''); }} style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+              店舗管理者ログイン
+            </button>
+          </>
+        )}
+      </div>
+
+      {showPasswordPrompt && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '24px', width: '320px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '12px' }}>編集パスワードを入力</div>
+            <input
+              type="text"
+              autoFocus
+              value={passwordInput}
+              onChange={e => setPasswordInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && attemptUnlock()}
+              placeholder="パスワード"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', marginBottom: '8px' }}
+            />
+            {passwordError && <div style={{ fontSize: '12px', color: '#C0594F', marginBottom: '8px' }}>{passwordError}</div>}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowPasswordPrompt(false)} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer' }}>
+                キャンセル
+              </button>
+              <button onClick={attemptUnlock} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                解除する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSetPassword && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '24px', width: '340px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '6px' }}>編集パスワードを設定</div>
+            <div style={{ fontSize: '12px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.6 }}>
+              このパスワードを知っている人だけが「{activeWorkspace?.name}」を編集できます。他の管理者にはこのパスワードを直接伝えてください。空欄にすると誰でも編集できる状態に戻ります。
+            </div>
+            <input
+              autoFocus
+              value={newPasswordInput}
+              onChange={e => setNewPasswordInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && setWorkspacePassword()}
+              placeholder="新しいパスワード（空欄で解除）"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', marginBottom: '14px' }}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSetPassword(false)} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer' }}>
+                キャンセル
+              </button>
+              <button onClick={setWorkspacePassword} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'categories' && (
+        <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE', maxWidth: '480px' }}>
+          <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px', color: '#1F1C18' }}>練習項目一覧</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+            {categories.map(c => (
+              <span key={c} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '7px 12px', borderRadius: '8px', background: '#FAF8F4', border: '1px solid #EEE9DE' }}>
+                {c}
+                {isUnlocked && (
+                  <button onClick={() => removeCategory(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', display: 'flex' }}>
+                    <X size={12} />
+                  </button>
+                )}
+              </span>
+            ))}
+            {categories.length === 0 && <span style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</span>}
+          </div>
+          {isUnlocked && (
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                value={newCategory}
+                onChange={e => setNewCategory(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addCategory()}
+                placeholder="例：パーマ、トリートメント"
+                style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px' }}
+              />
+              <button onClick={addCategory} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                <Plus size={14} /> 追加
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'people' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '560px' }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px', color: '#1F1C18' }}>トレーナー一覧</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', maxHeight: '320px', overflowY: 'auto' }}>
+              {trainers.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
+              {trainers.map(t => (
+                <div
+                  key={t.id}
+                  draggable={isUnlocked}
+                  onDragStart={() => isUnlocked && handleTrainerDragStart(t.id)}
+                  onDragOver={(e) => isUnlocked && handleTrainerDragOver(e, t.id)}
+                  onDragEnd={() => isUnlocked && handleTrainerDragEnd()}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', opacity: draggedTrainerId === t.id ? 0.5 : 1, gap: '8px' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                    {isUnlocked && (
+                      <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
+                    )}
+                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                      <Download size={14} />
+                    </button>
+                    {isUnlocked && (
+                      <button onClick={() => removePerson(t.id, 'trainer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px', color: '#1F1C18' }}>アシスタント一覧</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', maxHeight: '320px', overflowY: 'auto' }}>
+              {assistants.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
+              {assistants.map(a => (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                      <Download size={14} />
+                    </button>
+                    {isUnlocked && (
+                      <button onClick={() => removePerson(a.id, 'assistant')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {isUnlocked && (
+            <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <select value={newType} onChange={e => setNewType(e.target.value)} style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', background: '#FAF8F4', width: '100%' }}>
+                <option value="trainer">トレーナー</option>
+                <option value="assistant">アシスタント</option>
+              </select>
+              <input
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addPerson()}
+                placeholder="名前を入力"
+                style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', width: '100%' }}
+              />
+              <button onClick={addPerson} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 18px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%' }}>
+                <Plus size={14} /> 追加
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'shift' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button onClick={() => changeMonth(-1)} className="no-print" style={{ background: '#FFFFFF', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                <ChevronLeft size={16} />
+              </button>
+              <span style={{ fontSize: '15px', fontWeight: 700, minWidth: '110px', textAlign: 'center' }}>{fmtMonthLabel(year, month)}</span>
+              <button onClick={() => changeMonth(1)} className="no-print" style={{ background: '#FFFFFF', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+            {isUnlocked && (
+              <button onClick={autoAssign} className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px', borderRadius: '8px', border: 'none', background: '#4A6B5A', color: '#FFFFFF', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                <Shuffle size={14} /> トレーナーを自動で均等割り当て
+              </button>
+            )}
+          </div>
+
+          <div className="no-print" style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontSize: '12px', fontWeight: 600, cursor: 'pointer', color: '#2B2823' }}>
+              <Printer size={13} /> 印刷する
+            </button>
+            <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, null, null), `練習会シフト_${year}年${month + 1}月.ics`)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontSize: '12px', fontWeight: 600, cursor: 'pointer', color: '#2B2823' }}>
+              <Download size={13} /> 全体の予定をカレンダーファイルで書き出す
+            </button>
+          </div>
+
+          <div className="no-print" style={{ fontSize: '12px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.6 }}>
+            日付をクリックすると下に詳細が表示されます → 「時間帯を追加」で項目を作成 → トレーナー・アシスタントの名前をクリックすると即担当になります（もう一度押すと解除）→ トレーナーは「自動でシフト候補を作成」で出勤回数が均等になるよう自動でも割り当てられます
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '24px' }}>
+            {DAY_LABELS.map(d => (
+              <div key={d} style={{ textAlign: 'center', fontSize: '11px', color: '#B0A99A', fontWeight: 600, padding: '4px' }}>{d}</div>
+            ))}
+            {Array(dates[0].getDay()).fill(null).map((_, i) => <div key={'pad' + i} />)}
+            {dates.map(d => {
+              const ds = fmtDate(d);
+              const day = practiceDays[ds];
+              const isPractice = !!day;
+              const isSelected = ds === selectedDate;
+              const trainerSet = new Set();
+              const assistantSet = new Set();
+              (day?.sessions || []).forEach(s => {
+                (s.assigned?.trainers || []).forEach(id => trainerSet.add(id));
+                (s.assigned?.assistants || []).forEach(id => assistantSet.add(id));
+              });
+              return (
+                <button
+                  key={ds}
+                  onClick={() => selectDate(ds)}
+                  style={{
+                    aspectRatio: '1', borderRadius: '10px',
+                    border: isSelected ? '2px solid #2B2823' : (isPractice ? '1.5px solid #4A6B5A' : '1px solid #EEE9DE'),
+                    background: isSelected ? '#FFF6E8' : (isPractice ? '#EAF1ED' : '#FFFFFF'),
+                    cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    padding: '4px'
+                  }}
+                >
+                  <span style={{ fontSize: '13px', fontWeight: isPractice ? 700 : 500, color: isPractice ? '#2B4A3A' : '#2B2823' }}>{d.getDate()}</span>
+                  {isPractice && (
+                    <span style={{ fontSize: '9px', color: '#4A6B5A', marginTop: '2px' }}>
+                      T{trainerSet.size}/A{assistantSet.size}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 画面表示用：選択中の1日だけ表示 */}
+          <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {selectedDate && (() => {
+              const ds = selectedDate;
+              const day = practiceDays[ds];
+              const [yy, mm, dd] = ds.split('-').map(Number);
+              const d = new Date(yy, mm - 1, dd);
+              return (
+                <div style={{ background: '#FFFFFF', borderRadius: '12px', border: '1px solid #EEE9DE', padding: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#1F1C18' }}>
+                      {d.getMonth() + 1}月{d.getDate()}日（{DAY_LABELS[d.getDay()]}）
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {isUnlocked && (
+                        <button onClick={() => addSession(ds)} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', cursor: 'pointer', color: '#2B2823' }}>
+                          <Plus size={11} /> 時間帯を追加
+                        </button>
+                      )}
+                      {day && isUnlocked && (
+                        <button onClick={() => deletePracticeDay(ds)} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #EEDCDC', background: '#FFF8F6', cursor: 'pointer', color: '#B0746A' }}>
+                          <Trash2 size={11} /> この日を削除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {!day && (
+                    <div style={{ fontSize: '12px', color: '#B0A99A', padding: '16px 0', textAlign: 'center' }}>
+                      {isUnlocked ? 'この日にはまだ練習会がありません。「時間帯を追加」で作成してください。' : 'この日には練習会がありません。'}
+                    </div>
+                  )}
+
+                  {day && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {day.sessions.map(session => (
+                      <div key={session.id} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '12px', background: '#FCFBF8' }}>
+                        {isUnlocked ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                            <select value={session.category} onChange={e => updateSession(ds, session.id, { category: e.target.value })}
+                              style={{ fontSize: '12px', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontWeight: 600, color: '#2B4A3A' }}>
+                              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                            <select value={splitTime(session.startTime).h} onChange={e => updateSession(ds, session.id, { startTime: joinTime(e.target.value, splitTime(session.startTime).m) })}
+                              style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
+                              {HOUR_OPTIONS.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                            <span style={{ fontSize: '12px', color: '#9C9486' }}>:</span>
+                            <select value={splitTime(session.startTime).m} onChange={e => updateSession(ds, session.id, { startTime: joinTime(splitTime(session.startTime).h, e.target.value) })}
+                              style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
+                              {MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            <span style={{ fontSize: '12px', color: '#9C9486' }}>〜</span>
+                            <select value={splitTime(session.endTime).h} onChange={e => updateSession(ds, session.id, { endTime: joinTime(e.target.value, splitTime(session.endTime).m) })}
+                              style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
+                              {HOUR_OPTIONS.map(h => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                            <span style={{ fontSize: '12px', color: '#9C9486' }}>:</span>
+                            <select value={splitTime(session.endTime).m} onChange={e => updateSession(ds, session.id, { endTime: joinTime(splitTime(session.endTime).h, e.target.value) })}
+                              style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
+                              {MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            {day.sessions.length > 1 && (
+                              <button onClick={() => removeSession(ds, session.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', marginLeft: 'auto' }}>
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '10px' }}>
+                            {session.category}　{session.startTime}〜{session.endTime}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px', fontWeight: 600 }}>{isUnlocked ? 'トレーナー（クリックで担当に設定）' : 'トレーナー'}</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {isUnlocked ? trainers.map(t => {
+                                const on = session.assigned?.trainers?.includes(t.id);
+                                const count = trainerMonthCounts.find(tc => tc.id === t.id)?.count ?? 0;
+                                return (
+                                  <button key={t.id} onClick={() => toggleAssigned(ds, session.id, t.id, 'trainer')}
+                                    style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: on ? '1px solid #2B2823' : '1px solid #EEE9DE', background: on ? '#2B2823' : '#FAF8F4', color: on ? '#FAF8F4' : '#9C9486', cursor: 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    {t.name}
+                                    <span style={{ fontSize: '10px', opacity: 0.7 }}>({count})</span>
+                                  </button>
+                                );
+                              }) : (
+                                (session.assigned?.trainers || []).length > 0
+                                  ? sortIdsByRank(session.assigned.trainers, 'trainer').map(id => (
+                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700 }}>{nameById(id, 'trainer')}</span>
+                                    ))
+                                  : <span style={{ fontSize: '12px', color: '#C2BBA9' }}>未割り当て</span>
+                              )}
+                              {isUnlocked && trainers.length === 0 && <span style={{ fontSize: '12px', color: '#C2BBA9' }}>人員登録タブでトレーナーを追加してください</span>}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px', fontWeight: 600 }}>{isUnlocked ? 'アシスタント（クリックで参加に設定）' : 'アシスタント'}</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                              {isUnlocked ? assistants.map(a => {
+                                const on = session.assigned?.assistants?.includes(a.id);
+                                return (
+                                  <button key={a.id} onClick={() => toggleAssigned(ds, session.id, a.id, 'assistant')}
+                                    style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: on ? '1px solid #2B2823' : '1px solid #EEE9DE', background: on ? '#2B2823' : '#FAF8F4', color: on ? '#FAF8F4' : '#9C9486', cursor: 'pointer', fontWeight: on ? 700 : 500 }}>
+                                    {a.name}
+                                  </button>
+                                );
+                              }) : (
+                                (session.assigned?.assistants || []).length > 0
+                                  ? sortIdsByRank(session.assigned.assistants, 'assistant').map(id => (
+                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700 }}>{nameById(id, 'assistant')}</span>
+                                    ))
+                                  : <span style={{ fontSize: '12px', color: '#C2BBA9' }}>未割り当て</span>
+                              )}
+                              {isUnlocked && assistants.length === 0 && <span style={{ fontSize: '12px', color: '#C2BBA9' }}>人員登録タブでアシスタントを追加してください</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  )}
+                </div>
+              );
+            })()}
+            {!selectedDate && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#B0A99A', fontSize: '13px', background: '#FFFFFF', borderRadius: '12px', border: '1px dashed #EEE9DE' }}>
+                上のカレンダーで日付をクリックしてください
+              </div>
+            )}
+          </div>
+
+          {/* 印刷用：月内のすべての練習会日を表示 */}
+          <div className="print-only" style={{ flexDirection: 'column', gap: '10px' }}>
+            {dates.filter(d => practiceDays[fmtDate(d)]).map(d => {
+              const ds = fmtDate(d);
+              const day = practiceDays[ds];
+              return (
+                <div key={ds} style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '12px', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
+                    {d.getMonth() + 1}月{d.getDate()}日（{DAY_LABELS[d.getDay()]}）
+                  </div>
+                  {day.sessions.map(session => (
+                    <div key={session.id} style={{ marginBottom: '10px', paddingLeft: '8px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '4px' }}>
+                        {session.category}　{session.startTime}〜{session.endTime}
+                      </div>
+                      <div style={{ fontSize: '12px', marginBottom: '2px' }}>
+                        トレーナー：{sortIdsByRank(session.assigned?.trainers, 'trainer').map(id => nameById(id, 'trainer')).join('、') || '未割り当て'}
+                      </div>
+                      <div style={{ fontSize: '12px' }}>
+                        アシスタント：{sortIdsByRank(session.assigned?.assistants, 'assistant').map(id => nameById(id, 'assistant')).join('、') || '未割り当て'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+
+          {(trainers.length > 0 || assistants.length > 0) && (
+            <div className="no-print" style={{ marginTop: '24px', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #EEE9DE', padding: '16px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>今月の出勤回数バランス</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>トレーナー</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {trainerMonthCounts.map(t => (
+                      <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span>{t.name}</span>
+                        <span style={{ fontWeight: 700, color: t.count >= 3 && t.count <= 4 ? '#4A6B5A' : '#B08A4A' }}>{t.count}回</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>アシスタント</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
+                    {assistantMonthCounts.map(a => (
+                      <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span>{a.name}</span>
+                        <span style={{ fontWeight: 700 }}>{a.count}回</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      </>
+      )}
+
+      {showSnapshots && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '24px', width: '420px', maxHeight: '70vh', overflowY: 'auto' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '6px' }}>自動保存された履歴</div>
+            <div style={{ fontSize: '12px', color: '#9C9486', marginBottom: '14px', lineHeight: 1.6 }}>
+              このブラウザ内で自動的に保存された過去の状態です。直近{MAX_SNAPSHOTS}件まで保持されます。選んだ時点の状態に戻すと、現在のデータは上書きされます。
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+              {snapshotList.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ履歴がありません</div>}
+              {snapshotList.map((snap, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: '#FAF8F4', borderRadius: '8px' }}>
+                  <span style={{ fontSize: '13px' }}>{new Date(snap.takenAt).toLocaleString('ja-JP')}</span>
+                  <button onClick={() => restoreFromSnapshot(snap)} style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                    この状態に戻す
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSnapshots(false)} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer' }}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMasterPrompt && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '24px', width: '320px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '12px' }}>管理者パスワードを入力</div>
+            <input
+              type="text"
+              autoFocus
+              value={masterPasswordInput}
+              onChange={e => setMasterPasswordInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && attemptMasterUnlock()}
+              placeholder="パスワード"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', marginBottom: '8px' }}
+            />
+            {masterPasswordError && <div style={{ fontSize: '12px', color: '#C0594F', marginBottom: '8px' }}>{masterPasswordError}</div>}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowMasterPrompt(false)} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer' }}>
+                キャンセル
+              </button>
+              <button onClick={attemptMasterUnlock} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                ログイン
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSetMasterPassword && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '24px', width: '340px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '6px' }}>管理者パスワードを設定</div>
+            <div style={{ fontSize: '12px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.6 }}>
+              このパスワードを知っている人だけが、店舗の並べ替え・追加・削除ができます。他の管理者にはこのパスワードを直接伝えてください。
+            </div>
+            <input
+              autoFocus
+              value={newMasterPasswordInput}
+              onChange={e => setNewMasterPasswordInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && saveMasterPassword()}
+              placeholder="新しい管理者パスワード"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', marginBottom: '14px' }}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSetMasterPassword(false)} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer' }}>
+                キャンセル
+              </button>
+              <button onClick={saveMasterPassword} style={{ fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

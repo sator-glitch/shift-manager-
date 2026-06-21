@@ -1309,7 +1309,7 @@ export default function ShiftManager() {
             })}
           </div>
 
-          {(trainers.length > 0 || assistants.length > 0) && (
+          {isUnlocked && (trainers.length > 0 || assistants.length > 0) && (
             <div className="no-print" style={{ marginTop: '24px', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #EEE9DE', padding: '16px' }}>
               <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>今月の出勤回数バランス</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>

@@ -414,7 +414,7 @@ export default function ShiftManager() {
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId);
   const hasPassword = !!activeWorkspace?.password;
-  const hasMasterAccess = !masterPassword || isMasterUnlocked;
+  const hasMasterAccess = masterPasswordLoaded && (!masterPassword || isMasterUnlocked);
   const isUnlocked = hasMasterAccess || !hasPassword || !!unlockedWorkspaces[activeWorkspaceId];
 
   function attemptUnlock() {

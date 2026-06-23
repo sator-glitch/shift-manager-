@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Printer, Download, Tag, Upload, Save } from 'lucide-react';
+import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Printer, Download, Tag, Upload, Save, CalendarOff } from 'lucide-react';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -160,6 +160,9 @@ export default function ShiftManager() {
   const [newType, setNewType] = useState('trainer');
   const [newCategory, setNewCategory] = useState('');
   const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedOffPersonId, setSelectedOffPersonId] = useState(null);
+  const [selectedOffPersonType, setSelectedOffPersonType] = useState('trainer');
+  const [bulkOffWeekdays, setBulkOffWeekdays] = useState([]);
 
   // Load workspace list (and migrate legacy single-workspace data if present)
   useEffect(() => {
@@ -528,13 +531,70 @@ export default function ShiftManager() {
     setNewName('');
   }
 
-  // トレーナー/アシスタント個人の「休みの曜日」をトグルする
-  function toggleOffDay(personId, type, dayOfWeek) {
+  // 「曜日で一括設定」用：選択中の曜日をトグルする（保存はせず、適用ボタンを押すまで一時的な選択状態）
+  function toggleBulkOffWeekday(dayOfWeek) {
+    setBulkOffWeekdays(prev => prev.includes(dayOfWeek) ? prev.filter(d => d !== dayOfWeek) : [...prev, dayOfWeek]);
+  }
+
+  // 選択した曜日に該当する「表示中の月」の日付を、まとめてその人の休みに設定する
+  function applyBulkOffWeekdays(personId, type) {
+    if (bulkOffWeekdays.length === 0) return;
+    const matchDates = dates.filter(d => bulkOffWeekdays.includes(d.getDay())).map(d => fmtDate(d));
     const updater = (prev) => prev.map(p => {
       if (p.id !== personId) return p;
-      const offDays = p.offDays || [];
-      const next = offDays.includes(dayOfWeek) ? offDays.filter(d => d !== dayOfWeek) : [...offDays, dayOfWeek];
-      return { ...p, offDays: next };
+      const current = p.offDates || [];
+      const merged = Array.from(new Set([...current, ...matchDates]));
+      return { ...p, offDates: merged };
+    });
+    if (type === 'trainer') setTrainers(updater);
+    else setAssistants(updater);
+  }
+
+  // 先月、その人が休みだった曜日（固定パターンとみなす）を検出し、今月の同じ曜日へまとめて適用する
+  function copyLastMonthOffWeekdays(personId, type) {
+    const list = type === 'trainer' ? trainers : assistants;
+    const person = list.find(p => p.id === personId);
+    if (!person) return;
+
+    let prevMonth = month - 1, prevYear = year;
+    if (prevMonth < 0) { prevMonth = 11; prevYear -= 1; }
+    const prevMonthDates = getMonthDates(prevYear, prevMonth);
+    const prevMonthDateStrs = new Set(prevMonthDates.map(d => fmtDate(d)));
+
+    const detectedWeekdays = new Set();
+    (person.offDates || []).forEach(ds => {
+      if (prevMonthDateStrs.has(ds)) {
+        const [yy, mm, dd] = ds.split('-').map(Number);
+        detectedWeekdays.add(new Date(yy, mm - 1, dd).getDay());
+      }
+    });
+
+    if (detectedWeekdays.size === 0) {
+      alert('先月の休みのデータが見つかりませんでした。');
+      return;
+    }
+
+    const weekdaysArr = Array.from(detectedWeekdays);
+    setBulkOffWeekdays(weekdaysArr);
+
+    const matchDates = dates.filter(d => weekdaysArr.includes(d.getDay())).map(d => fmtDate(d));
+    const updater = (prev) => prev.map(p => {
+      if (p.id !== personId) return p;
+      const current = p.offDates || [];
+      const merged = Array.from(new Set([...current, ...matchDates]));
+      return { ...p, offDates: merged };
+    });
+    if (type === 'trainer') setTrainers(updater);
+    else setAssistants(updater);
+  }
+
+  // トレーナー/アシスタント個人の「休みの日付」をトグルする（曜日の繰り返しではなく、その日だけの個別設定）
+  function toggleOffDate(personId, type, dateStr) {
+    const updater = (prev) => prev.map(p => {
+      if (p.id !== personId) return p;
+      const offDates = p.offDates || [];
+      const next = offDates.includes(dateStr) ? offDates.filter(d => d !== dateStr) : [...offDates, dateStr];
+      return { ...p, offDates: next };
     });
     if (type === 'trainer') setTrainers(updater);
     else setAssistants(updater);
@@ -703,8 +763,8 @@ export default function ShiftManager() {
       }
 
       const sessions = day.sessions.map(session => {
-        // その曜日が休みのトレーナーは自動割り当ての対象から外す
-        const allTrainerIds = trainers.filter(t => !(t.offDays || []).includes(dow)).map(t => t.id);
+        // その日が休みのトレーナーは自動割り当ての対象から外す
+        const allTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
         const sortedTrainers = [...allTrainerIds].sort((a, b) => trainerCounts[a] - trainerCounts[b]);
         const assignedTrainers = sortedTrainers.slice(0, Math.min(1, sortedTrainers.length));
         assignedTrainers.forEach(id => trainerCounts[id] = (trainerCounts[id] || 0) + 1);
@@ -923,6 +983,7 @@ export default function ShiftManager() {
             { key: 'shift', label: 'シフト', icon: Calendar },
             { key: 'people', label: '人員登録', icon: Users },
             { key: 'categories', label: '練習項目', icon: Tag },
+            { key: 'offdays', label: '休み設定', icon: CalendarOff },
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -1052,6 +1113,219 @@ export default function ShiftManager() {
         </div>
       )}
 
+      {tab === 'offdays' && (() => {
+        const selectedPerson = (selectedOffPersonType === 'trainer' || selectedOffPersonType === 'assistant')
+          ? (selectedOffPersonType === 'trainer' ? trainers.find(t => t.id === selectedOffPersonId) : assistants.find(a => a.id === selectedOffPersonId))
+          : null;
+        return (
+          <div>
+            <div style={{ fontSize: '12px', color: '#9C9486', marginBottom: '16px', lineHeight: 1.6 }}>
+              スタッフの名前を選ぶと、その人だけの休みをカレンダーで個別に設定できます（曜日固定の人は「曜日で一括設定」も使えます）。店舗全体の定休日・特別営業日はその下のボタンから設定できます。
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+              <button onClick={() => { setSelectedOffPersonType('store_weekly'); setSelectedOffPersonId(null); }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: selectedOffPersonType === 'store_weekly' ? '1px solid #B0746A' : '1px solid #EEE9DE', background: selectedOffPersonType === 'store_weekly' ? '#B0746A' : '#FFFFFF', color: selectedOffPersonType === 'store_weekly' ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 600 }}>
+                <CalendarOff size={14} /> 定休日設定
+              </button>
+              <button onClick={() => { setSelectedOffPersonType('store_override'); setSelectedOffPersonId(null); }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: selectedOffPersonType === 'store_override' ? '1px solid #4A6B5A' : '1px solid #EEE9DE', background: selectedOffPersonType === 'store_override' ? '#4A6B5A' : '#FFFFFF', color: selectedOffPersonType === 'store_override' ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 600 }}>
+                <Calendar size={14} /> 特別営業日設定
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 8px', color: '#1F1C18' }}>トレーナー</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {trainers.length === 0 && <span style={{ fontSize: '12px', color: '#B0A99A' }}>まだ登録されていません</span>}
+                  {trainers.map(t => {
+                    const isSel = selectedOffPersonType === 'trainer' && selectedOffPersonId === t.id;
+                    return (
+                      <button key={t.id} onClick={() => { setSelectedOffPersonId(t.id); setSelectedOffPersonType('trainer'); setBulkOffWeekdays([]); }}
+                        style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '1px solid #2B2823' : '1px solid #EEE9DE', background: isSel ? '#2B2823' : '#FFFFFF', color: isSel ? '#FAF8F4' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
+                        {t.name}{(t.offDates && t.offDates.length > 0) ? `（${t.offDates.length}）` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <h3 style={{ fontSize: '13px', fontWeight: 700, margin: '0 0 8px', color: '#1F1C18' }}>アシスタント</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {assistants.length === 0 && <span style={{ fontSize: '12px', color: '#B0A99A' }}>まだ登録されていません</span>}
+                  {assistants.map(a => {
+                    const isSel = selectedOffPersonType === 'assistant' && selectedOffPersonId === a.id;
+                    return (
+                      <button key={a.id} onClick={() => { setSelectedOffPersonId(a.id); setSelectedOffPersonType('assistant'); setBulkOffWeekdays([]); }}
+                        style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '1px solid #2B2823' : '1px solid #EEE9DE', background: isSel ? '#2B2823' : '#FFFFFF', color: isSel ? '#FAF8F4' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
+                        {a.name}{(a.offDates && a.offDates.length > 0) ? `（${a.offDates.length}）` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {selectedOffPersonType === 'store_weekly' && (
+              <div style={{ background: '#FFFFFF', borderRadius: '14px', border: '1px solid #EEE9DE', padding: '20px', maxWidth: '480px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 4px', color: '#1F1C18' }}>店舗の定休日（毎週）</h3>
+                <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.5 }}>
+                  選んだ曜日はカレンダー上で定休日になり、その日は全員のシフト割り当てができなくなります。特定の日だけ例外にしたい場合は「特別営業日設定」で個別に設定できます。
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {DAY_LABELS.map((label, idx) => {
+                    const isClosedDay = (activeWorkspace?.closedWeekdays || []).includes(idx);
+                    return isUnlocked ? (
+                      <button key={idx} onClick={() => toggleClosedWeekday(idx)}
+                        style={{ fontSize: '12px', width: '36px', height: '36px', borderRadius: '8px', border: isClosedDay ? '1px solid #B0746A' : '1px solid #EEE9DE', background: isClosedDay ? '#B0746A' : '#FFFFFF', color: isClosedDay ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 700 }}>
+                        {label}
+                      </button>
+                    ) : (
+                      <span key={idx} style={{ fontSize: '12px', width: '36px', height: '36px', borderRadius: '8px', border: '1px solid #EEE9DE', background: isClosedDay ? '#B0746A' : '#FFFFFF', color: isClosedDay ? '#FFFFFF' : '#B0A99A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                        {label}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {selectedOffPersonType === 'store_override' && (
+              <div style={{ background: '#FFFFFF', borderRadius: '14px', border: '1px solid #EEE9DE', padding: '20px', maxWidth: '480px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: '#1F1C18' }}>特別営業日・特別休業日設定</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button onClick={() => changeMonth(-1)} style={{ background: '#FAF8F4', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '90px', textAlign: 'center' }}>{fmtMonthLabel(year, month)}</span>
+                    <button onClick={() => changeMonth(1)} style={{ background: '#FAF8F4', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+                <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.5 }}>
+                  通常は定休日（毎週）の設定通りになります。特定の日だけ例外にしたい場合は、その日をクリックして上書きしてください（もう一度押すと元に戻ります）。
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px' }}>
+                  {DAY_LABELS.map(d => (
+                    <div key={d} style={{ textAlign: 'center', fontSize: '11px', color: '#B0A99A', fontWeight: 600, padding: '4px' }}>{d}</div>
+                  ))}
+                  {Array(dates[0].getDay()).fill(null).map((_, i) => <div key={'pad' + i} />)}
+                  {dates.map(d => {
+                    const ds = fmtDate(d);
+                    const dow = d.getDay();
+                    const closed = isClosedOn(activeWorkspace, ds, dow);
+                    const hasOverride = !!(activeWorkspace?.closedDateOverrides && Object.prototype.hasOwnProperty.call(activeWorkspace.closedDateOverrides, ds));
+                    return (
+                      <button key={ds}
+                        onClick={() => isUnlocked && setDateOverride(ds, !closed)}
+                        disabled={!isUnlocked}
+                        title={hasOverride ? '例外設定中（クリックでもう一度切り替え、または個別に解除）' : undefined}
+                        style={{
+                          aspectRatio: '1', borderRadius: '10px',
+                          border: closed ? (hasOverride ? '1.5px solid #B0746A' : '1px solid #EEE9DE') : (hasOverride ? '1.5px solid #4A6B5A' : '1px solid #EEE9DE'),
+                          background: closed ? '#F8EDEA' : (hasOverride ? '#EAF1ED' : '#FFFFFF'),
+                          cursor: isUnlocked ? 'pointer' : 'default',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4px'
+                        }}>
+                        <span style={{ fontSize: '13px', fontWeight: closed ? 700 : 500, color: closed ? '#B0746A' : '#2B2823' }}>{d.getDate()}</span>
+                        <span style={{ fontSize: '8px', color: closed ? '#B0746A' : '#4A6B5A', marginTop: '2px' }}>
+                          {closed ? '休業' : '営業'}{hasOverride ? '・例外' : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {selectedPerson && (
+              <div style={{ background: '#FFFFFF', borderRadius: '14px', border: '1px solid #EEE9DE', padding: '20px', maxWidth: '480px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#1F1C18' }}>{selectedPerson.name} の休み設定</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button onClick={() => changeMonth(-1)} style={{ background: '#FAF8F4', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '90px', textAlign: 'center' }}>{fmtMonthLabel(year, month)}</span>
+                    <button onClick={() => changeMonth(1)} style={{ background: '#FAF8F4', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+                {!isUnlocked && (
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '10px' }}>閲覧モードのため、休みの変更はできません。</div>
+                )}
+
+                {isUnlocked && (
+                  <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: '#FAF8F4', border: '1px solid #EEE9DE' }}>
+                    <div style={{ fontSize: '11px', color: '#8A8378', marginBottom: '8px', fontWeight: 600 }}>
+                      曜日固定の人向け：曜日で一括設定（{fmtMonthLabel(year, month)}に反映）
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                      {DAY_LABELS.map((label, idx) => {
+                        const isSelDay = bulkOffWeekdays.includes(idx);
+                        return (
+                          <button key={idx} onClick={() => toggleBulkOffWeekday(idx)}
+                            style={{ fontSize: '11px', width: '28px', height: '28px', borderRadius: '6px', border: isSelDay ? '1px solid #B0746A' : '1px solid #E2DCCC', background: isSelDay ? '#B0746A' : '#FFFFFF', color: isSelDay ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 700 }}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={() => applyBulkOffWeekdays(selectedPerson.id, selectedOffPersonType)}
+                      disabled={bulkOffWeekdays.length === 0}
+                      style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: 'none', background: bulkOffWeekdays.length === 0 ? '#E2DCCC' : '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: bulkOffWeekdays.length === 0 ? 'default' : 'pointer', marginRight: '8px' }}>
+                      この曜日を{fmtMonthLabel(year, month)}の休みに一括設定
+                    </button>
+                    <button
+                      onClick={() => copyLastMonthOffWeekdays(selectedPerson.id, selectedOffPersonType)}
+                      style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#2B2823', fontWeight: 600, cursor: 'pointer' }}>
+                      先月の休みの曜日をコピーして設定
+                    </button>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px' }}>
+                  {DAY_LABELS.map(d => (
+                    <div key={d} style={{ textAlign: 'center', fontSize: '11px', color: '#B0A99A', fontWeight: 600, padding: '4px' }}>{d}</div>
+                  ))}
+                  {Array(dates[0].getDay()).fill(null).map((_, i) => <div key={'pad' + i} />)}
+                  {dates.map(d => {
+                    const ds = fmtDate(d);
+                    const isOff = (selectedPerson.offDates || []).includes(ds);
+                    return (
+                      <button key={ds}
+                        onClick={() => isUnlocked && toggleOffDate(selectedPerson.id, selectedOffPersonType, ds)}
+                        disabled={!isUnlocked}
+                        style={{
+                          aspectRatio: '1', borderRadius: '10px',
+                          border: isOff ? '1.5px solid #B0746A' : '1px solid #EEE9DE',
+                          background: isOff ? '#F8EDEA' : '#FFFFFF',
+                          cursor: isUnlocked ? 'pointer' : 'default',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4px'
+                        }}>
+                        <span style={{ fontSize: '13px', fontWeight: isOff ? 700 : 500, color: isOff ? '#B0746A' : '#2B2823' }}>{d.getDate()}</span>
+                        {isOff && <span style={{ fontSize: '9px', color: '#B0746A', marginTop: '2px' }}>休み</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {!selectedPerson && selectedOffPersonType !== 'store_weekly' && selectedOffPersonType !== 'store_override' && (
+              <div style={{ fontSize: '13px', color: '#B0A99A', textAlign: 'center', padding: '40px 0' }}>
+                上の名前またはボタンを選んでください
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {tab === 'categories' && (
         <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE', maxWidth: '480px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px', color: '#1F1C18' }}>練習項目一覧</h3>
@@ -1088,28 +1362,6 @@ export default function ShiftManager() {
       {tab === 'people' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '560px' }}>
           <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 4px', color: '#1F1C18' }}>店舗の定休日（毎週）</h3>
-            <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.5 }}>
-              選んだ曜日はカレンダー上で定休日になり、その日は全員のシフト割り当てができなくなります。特定の日だけ例外にしたい場合は、カレンダーでその日を選んで個別に設定できます。
-            </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              {DAY_LABELS.map((label, idx) => {
-                const isClosedDay = (activeWorkspace?.closedWeekdays || []).includes(idx);
-                return isUnlocked ? (
-                  <button key={idx} onClick={() => toggleClosedWeekday(idx)}
-                    style={{ fontSize: '12px', width: '36px', height: '36px', borderRadius: '8px', border: isClosedDay ? '1px solid #B0746A' : '1px solid #EEE9DE', background: isClosedDay ? '#B0746A' : '#FFFFFF', color: isClosedDay ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 700 }}>
-                    {label}
-                  </button>
-                ) : (
-                  <span key={idx} style={{ fontSize: '12px', width: '36px', height: '36px', borderRadius: '8px', border: '1px solid #EEE9DE', background: isClosedDay ? '#B0746A' : '#FFFFFF', color: isClosedDay ? '#FFFFFF' : '#B0A99A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                    {label}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
             <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 12px', color: '#1F1C18' }}>トレーナー一覧</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', maxHeight: '320px', overflowY: 'auto' }}>
               {trainers.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
@@ -1120,40 +1372,22 @@ export default function ShiftManager() {
                   onDragStart={() => isUnlocked && handleTrainerDragStart(t.id)}
                   onDragOver={(e) => isUnlocked && handleTrainerDragOver(e, t.id)}
                   onDragEnd={() => isUnlocked && handleTrainerDragEnd()}
-                  style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', opacity: draggedTrainerId === t.id ? 0.5 : 1 }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', opacity: draggedTrainerId === t.id ? 0.5 : 1, gap: '8px' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
-                      {isUnlocked && (
-                        <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
-                      )}
-                      <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                      <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
-                        <Download size={14} />
-                      </button>
-                      {isUnlocked && (
-                        <button onClick={() => removePerson(t.id, 'trainer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                    {isUnlocked && (
+                      <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
+                    )}
+                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ fontSize: '10px', color: '#B0A99A', marginRight: '2px', flexShrink: 0 }}>休み:</span>
-                    {isUnlocked ? DAY_LABELS.map((label, idx) => {
-                      const isOff = (t.offDays || []).includes(idx);
-                      return (
-                        <button key={idx} onClick={() => toggleOffDay(t.id, 'trainer', idx)}
-                          style={{ fontSize: '10px', width: '22px', height: '22px', borderRadius: '5px', border: isOff ? '1px solid #B0746A' : '1px solid #EEE9DE', background: isOff ? '#F3E3DF' : '#FFFFFF', color: isOff ? '#B0746A' : '#B0A99A', cursor: 'pointer', fontWeight: isOff ? 700 : 500 }}>
-                          {label}
-                        </button>
-                      );
-                    }) : (
-                      <span style={{ fontSize: '11px', color: '#9C9486' }}>
-                        {(t.offDays && t.offDays.length > 0) ? t.offDays.slice().sort().map(i => DAY_LABELS[i]).join('・') : 'なし'}
-                      </span>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                      <Download size={14} />
+                    </button>
+                    {isUnlocked && (
+                      <button onClick={() => removePerson(t.id, 'trainer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                        <Trash2 size={14} />
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1166,34 +1400,16 @@ export default function ShiftManager() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', maxHeight: '320px', overflowY: 'auto' }}>
               {assistants.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
               {assistants.map(a => (
-                <div key={a.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
-                    <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                      <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
-                        <Download size={14} />
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                      <Download size={14} />
+                    </button>
+                    {isUnlocked && (
+                      <button onClick={() => removePerson(a.id, 'assistant')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                        <Trash2 size={14} />
                       </button>
-                      {isUnlocked && (
-                        <button onClick={() => removePerson(a.id, 'assistant')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ fontSize: '10px', color: '#B0A99A', marginRight: '2px', flexShrink: 0 }}>休み:</span>
-                    {isUnlocked ? DAY_LABELS.map((label, idx) => {
-                      const isOff = (a.offDays || []).includes(idx);
-                      return (
-                        <button key={idx} onClick={() => toggleOffDay(a.id, 'assistant', idx)}
-                          style={{ fontSize: '10px', width: '22px', height: '22px', borderRadius: '5px', border: isOff ? '1px solid #B0746A' : '1px solid #EEE9DE', background: isOff ? '#F3E3DF' : '#FFFFFF', color: isOff ? '#B0746A' : '#B0A99A', cursor: 'pointer', fontWeight: isOff ? 700 : 500 }}>
-                          {label}
-                        </button>
-                      );
-                    }) : (
-                      <span style={{ fontSize: '11px', color: '#9C9486' }}>
-                        {(a.offDays && a.offDays.length > 0) ? a.offDays.slice().sort().map(i => DAY_LABELS[i]).join('・') : 'なし'}
-                      </span>
                     )}
                   </div>
                 </div>
@@ -1391,7 +1607,7 @@ export default function ShiftManager() {
                               {isUnlocked ? trainers.map(t => {
                                 const on = session.assigned?.trainers?.includes(t.id);
                                 const count = trainerMonthCounts.find(tc => tc.id === t.id)?.count ?? 0;
-                                const personOff = (t.offDays || []).includes(dow);
+                                const personOff = (t.offDates || []).includes(ds);
                                 const blocked = closedToday || personOff;
                                 return (
                                   <button key={t.id} onClick={() => !blocked && toggleAssigned(ds, session.id, t.id, 'trainer')}
@@ -1400,7 +1616,7 @@ export default function ShiftManager() {
                                     style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: blocked ? '1px solid #EEE9DE' : (on ? '1px solid #2B2823' : '1px solid #EEE9DE'), background: blocked ? '#F3F1EC' : (on ? '#2B2823' : '#FAF8F4'), color: blocked ? '#C9C2B2' : (on ? '#FAF8F4' : '#9C9486'), cursor: blocked ? 'not-allowed' : 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
                                     {t.name}
                                     <span style={{ fontSize: '10px', opacity: 0.7 }}>
-                                      {blocked ? (closedToday ? '定休日' : '休み') : `(${count})`}
+                                      {`(${count})`}{blocked ? (closedToday ? ' 定休日' : ' 休み') : ''}
                                     </span>
                                   </button>
                                 );
@@ -1419,7 +1635,7 @@ export default function ShiftManager() {
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
                               {isUnlocked ? assistants.map(a => {
                                 const on = session.assigned?.assistants?.includes(a.id);
-                                const personOff = (a.offDays || []).includes(dow);
+                                const personOff = (a.offDates || []).includes(ds);
                                 const blocked = closedToday || personOff;
                                 return (
                                   <button key={a.id} onClick={() => !blocked && toggleAssigned(ds, session.id, a.id, 'assistant')}

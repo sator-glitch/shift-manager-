@@ -188,13 +188,24 @@ export default function ShiftManager() {
         if (res && res.value) {
           setMasterPassword(res.value);
         } else {
-          // 初回利用時のみデフォルトの管理者パスワードを設定する
+          // res.value が空の場合のみここに来る（通常は起きないが念のため残す）
           const defaultPw = '1111';
           await window.storage.set(MASTER_PASSWORD_KEY, defaultPw);
           setMasterPassword(defaultPw);
         }
       } catch (e) {
-        setMasterPassword('');
+        // window.storage.get はキーが未保存の場合に値を返さず例外を投げる仕様。
+        // ここに来るのは「まだ一度も管理者パスワードが保存されていない」ケースなので、
+        // デフォルトパスワードを生成してFirebaseに保存し、ローカル状態にも反映する。
+        try {
+          const defaultPw = '1111';
+          await window.storage.set(MASTER_PASSWORD_KEY, defaultPw);
+          setMasterPassword(defaultPw);
+        } catch (e2) {
+          // ここに来るのはFirebaseへの書き込み自体が失敗した本当の異常系のみ
+          console.error('管理者パスワードの初期化に失敗しました', e2);
+          setMasterPassword('');
+        }
       }
       setMasterPasswordLoaded(true);
     }
@@ -289,8 +300,18 @@ export default function ShiftManager() {
   }, [takeSnapshot]);
 
   function persistWorkspaceList(next) {
-    setWorkspaces(next);
-    window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(next)).catch(e => console.error(e));
+    // Firebaseへの保存が成功した場合のみローカル状態(画面表示)を更新する。
+    // 失敗した場合は画面はそれまでの状態のままにし、アラートで知らせる。
+    return window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(next))
+      .then(() => {
+        setWorkspaces(next);
+        return true;
+      })
+      .catch(e => {
+        console.error('店舗データの保存に失敗しました', e);
+        alert('店舗データの保存に失敗しました。通信状態を確認して、もう一度お試しください。');
+        return false;
+      });
   }
 
   async function openSnapshots() {
@@ -379,22 +400,24 @@ export default function ShiftManager() {
     }
   }
 
-  function addWorkspace() {
+  async function addWorkspace() {
     const usedLetters = workspaces.map(w => w.name);
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
     const nextLetter = letters.find(l => !usedLetters.includes(l)) || `グループ${workspaces.length + 1}`;
     const id = 'ws_' + Date.now().toString();
     const next = [...workspaces, { id, name: nextLetter, password: '' }];
-    persistWorkspaceList(next);
+    const ok = await persistWorkspaceList(next);
+    if (!ok) return;
     setActiveWorkspaceId(id);
     // 自分が今作ったワークスペースはそのまま編集可能にする
     setUnlockedWorkspaces(prev => ({ ...prev, [id]: true }));
   }
 
-  function removeWorkspace(id) {
+  async function removeWorkspace(id) {
     if (workspaces.length <= 1) return;
     const next = workspaces.filter(w => w.id !== id);
-    persistWorkspaceList(next);
+    const ok = await persistWorkspaceList(next);
+    if (!ok) return;
     if (activeWorkspaceId === id) setActiveWorkspaceId(null);
     window.storage.delete(workspaceDataKey(id)).catch(() => {});
   }
@@ -405,10 +428,11 @@ export default function ShiftManager() {
     setEditingWorkspaceName(true);
   }
 
-  function confirmRenameWorkspace() {
+  async function confirmRenameWorkspace() {
     if (!workspaceNameInput.trim()) { setEditingWorkspaceName(false); return; }
     const next = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, name: workspaceNameInput.trim() } : w);
-    persistWorkspaceList(next);
+    const ok = await persistWorkspaceList(next);
+    if (!ok) return;
     setEditingWorkspaceName(false);
   }
 
@@ -436,9 +460,10 @@ export default function ShiftManager() {
     });
   }
 
-  function setWorkspacePassword() {
+  async function setWorkspacePassword() {
     const next = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, password: newPasswordInput } : w);
-    persistWorkspaceList(next);
+    const ok = await persistWorkspaceList(next);
+    if (!ok) return;
     setShowSetPassword(false);
     setNewPasswordInput('');
     // 設定した本人はそのまま編集可能のままにしておく
@@ -461,11 +486,18 @@ export default function ShiftManager() {
   }
 
   function saveMasterPassword() {
-    window.storage.set(MASTER_PASSWORD_KEY, newMasterPasswordInput).catch(e => console.error(e));
-    setMasterPassword(newMasterPasswordInput);
-    setShowSetMasterPassword(false);
-    setNewMasterPasswordInput('');
-    setIsMasterUnlocked(true);
+    window.storage.set(MASTER_PASSWORD_KEY, newMasterPasswordInput)
+      .then(() => {
+        // Firebaseへの保存が成功した場合のみローカル状態を更新する
+        setMasterPassword(newMasterPasswordInput);
+        setShowSetMasterPassword(false);
+        setNewMasterPasswordInput('');
+        setIsMasterUnlocked(true);
+      })
+      .catch(e => {
+        console.error('管理者パスワードの保存に失敗しました', e);
+        alert('管理者パスワードの保存に失敗しました。通信状態を確認して、もう一度お試しください。');
+      });
   }
 
   const dates = getMonthDates(year, month);

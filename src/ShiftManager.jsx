@@ -1324,17 +1324,19 @@ export default function ShiftManager() {
                         );
                       })}
                     </div>
-                    <button
-                      onClick={() => applyBulkOffWeekdays(selectedPerson.id, selectedOffPersonType)}
-                      disabled={bulkOffWeekdays.length === 0}
-                      style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: 'none', background: bulkOffWeekdays.length === 0 ? '#E2DCCC' : '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: bulkOffWeekdays.length === 0 ? 'default' : 'pointer', marginRight: '8px' }}>
-                      この曜日を{fmtMonthLabel(year, month)}の休みに一括設定
-                    </button>
-                    <button
-                      onClick={() => copyLastMonthOffWeekdays(selectedPerson.id, selectedOffPersonType)}
-                      style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#2B2823', fontWeight: 600, cursor: 'pointer' }}>
-                      先月の休みの曜日をコピーして設定
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => applyBulkOffWeekdays(selectedPerson.id, selectedOffPersonType)}
+                        disabled={bulkOffWeekdays.length === 0}
+                        style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: 'none', background: bulkOffWeekdays.length === 0 ? '#E2DCCC' : '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: bulkOffWeekdays.length === 0 ? 'default' : 'pointer' }}>
+                        この曜日を{fmtMonthLabel(year, month)}の休みに一括設定
+                      </button>
+                      <button
+                        onClick={() => copyLastMonthOffWeekdays(selectedPerson.id, selectedOffPersonType)}
+                        style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#2B2823', fontWeight: 600, cursor: 'pointer' }}>
+                        先月の休みの曜日をコピーして設定
+                      </button>
+                    </div>
                   </div>
                 )}
 

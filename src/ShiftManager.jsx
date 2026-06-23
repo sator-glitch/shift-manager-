@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Calendar, Users, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff } from 'lucide-react';
+import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff } from 'lucide-react';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -738,6 +738,52 @@ export default function ShiftManager() {
     });
   }
 
+  // トレーナーだけを自動で割り当てる。アシスタントは手動配置済みの前提で、
+  // そのセッションのアシスタント数に応じた帯ルール（固定）でトレーナー人数を決める。
+  // 休みで対応可能なトレーナーが少ない場合は、目安より少ない人数になる（休み優先）。
+  function autoAssign() {
+    const practiceDateStrs = Object.keys(practiceDays).filter(ds => {
+      const [y, m] = ds.split('-').map(Number);
+      return y === year && m === month + 1;
+    }).sort();
+
+    const trainerCounts = {};
+    trainers.forEach(t => trainerCounts[t.id] = 0);
+
+    const next = { ...practiceDays };
+
+    practiceDateStrs.forEach(ds => {
+      const [yy, mm, dd] = ds.split('-').map(Number);
+      const dow = new Date(yy, mm - 1, dd).getDay();
+      const day = next[ds];
+
+      // 定休日は自動割り当ての対象から外す（既存のデータはそのまま変更しない）
+      if (isClosedOn(activeWorkspace, ds, dow)) {
+        return;
+      }
+
+      // その日に休みでないトレーナーだけが対象
+      const availableTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
+
+      const sessions = day.sessions.map(session => {
+        const assistantCount = (session.assigned?.assistants || []).length;
+        // アシスタント数 × 比率を目安にする（最低1人）
+        // 帯ルール（固定）：アシスタント1〜3人→トレーナー最大2人、4〜6人→最大3人、
+        // 7〜9人→最大4人、以降も3人ごとに+1人。常に帯の最大値を目標にする。
+        const target = Math.ceil(assistantCount / 3) + 1;
+
+        const sortedTrainers = [...availableTrainerIds].sort((a, b) => trainerCounts[a] - trainerCounts[b]);
+        const assignedTrainers = sortedTrainers.slice(0, Math.min(target, sortedTrainers.length));
+        assignedTrainers.forEach(id => trainerCounts[id] = (trainerCounts[id] || 0) + 1);
+
+        return { ...session, assigned: { trainers: assignedTrainers, assistants: session.assigned?.assistants || [] } };
+      });
+      next[ds] = { ...day, sessions };
+    });
+
+    setPracticeDays(next);
+  }
+
   function nameById(id, type) {
     const list = type === 'trainer' ? trainers : assistants;
     return list.find(p => p.id === id)?.name || '?';
@@ -1401,7 +1447,7 @@ export default function ShiftManager() {
 
       {tab === 'shift' && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <button onClick={() => changeMonth(-1)} className="no-print" style={{ background: '#FFFFFF', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
                 <ChevronLeft size={16} />
@@ -1411,10 +1457,17 @@ export default function ShiftManager() {
                 <ChevronRight size={16} />
               </button>
             </div>
+            {isUnlocked && (
+              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <button onClick={autoAssign} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px', borderRadius: '8px', border: 'none', background: '#4A6B5A', color: '#FFFFFF', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                  <Shuffle size={14} /> トレーナーを自動で割り当て
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="no-print" style={{ fontSize: '12px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.6 }}>
-            日付をクリックすると下に詳細が表示されます → 「時間帯を追加」で項目を作成 → トレーナー・アシスタントの名前をクリックすると即担当になります（もう一度押すと解除）
+            日付をクリックすると下に詳細が表示されます → 「時間帯を追加」で項目を作成 → トレーナー・アシスタントの名前をクリックすると即担当になります（もう一度押すと解除）→ アシスタントを先に手動で配置すると、トレーナーの自動割り当てが「アシスタント1〜3人→トレーナー2人、4〜6人→3人」のように人数を決めます（休みで人数が足りない場合は少なくなります）
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '24px' }}>

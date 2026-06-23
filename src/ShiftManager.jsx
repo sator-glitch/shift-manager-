@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Printer, Download, Tag, Upload, Save, CalendarOff } from 'lucide-react';
+import { Plus, Trash2, Calendar, Users, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff } from 'lucide-react';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -738,45 +738,6 @@ export default function ShiftManager() {
     });
   }
 
-  // Auto-assign across all sessions in the month, balancing counts per person
-  function autoAssign() {
-    const practiceDateStrs = Object.keys(practiceDays).filter(ds => {
-      const [y, m] = ds.split('-').map(Number);
-      return y === year && m === month + 1;
-    }).sort();
-
-    const trainerCounts = {};
-    trainers.forEach(t => trainerCounts[t.id] = 0);
-    const assistantCounts = {};
-    assistants.forEach(a => assistantCounts[a.id] = 0);
-
-    const next = { ...practiceDays };
-
-    practiceDateStrs.forEach(ds => {
-      const [yy, mm, dd] = ds.split('-').map(Number);
-      const dow = new Date(yy, mm - 1, dd).getDay();
-      const day = next[ds];
-
-      // 定休日は自動割り当ての対象から外す（既存のデータはそのまま変更しない）
-      if (isClosedOn(activeWorkspace, ds, dow)) {
-        return;
-      }
-
-      const sessions = day.sessions.map(session => {
-        // その日が休みのトレーナーは自動割り当ての対象から外す
-        const allTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
-        const sortedTrainers = [...allTrainerIds].sort((a, b) => trainerCounts[a] - trainerCounts[b]);
-        const assignedTrainers = sortedTrainers.slice(0, Math.min(1, sortedTrainers.length));
-        assignedTrainers.forEach(id => trainerCounts[id] = (trainerCounts[id] || 0) + 1);
-
-        return { ...session, assigned: { trainers: assignedTrainers, assistants: session.assigned?.assistants || [] } };
-      });
-      next[ds] = { ...day, sessions };
-    });
-
-    setPracticeDays(next);
-  }
-
   function nameById(id, type) {
     const list = type === 'trainer' ? trainers : assistants;
     return list.find(p => p.id === id)?.name || '?';
@@ -1450,24 +1411,10 @@ export default function ShiftManager() {
                 <ChevronRight size={16} />
               </button>
             </div>
-            {isUnlocked && (
-              <button onClick={autoAssign} className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px', borderRadius: '8px', border: 'none', background: '#4A6B5A', color: '#FFFFFF', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-                <Shuffle size={14} /> トレーナーを自動で均等割り当て
-              </button>
-            )}
-          </div>
-
-          <div className="no-print" style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-            <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontSize: '12px', fontWeight: 600, cursor: 'pointer', color: '#2B2823' }}>
-              <Printer size={13} /> 印刷する
-            </button>
-            <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, null, null), `練習会シフト_${year}年${month + 1}月.ics`)} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontSize: '12px', fontWeight: 600, cursor: 'pointer', color: '#2B2823' }}>
-              <Download size={13} /> 全体の予定をカレンダーファイルで書き出す
-            </button>
           </div>
 
           <div className="no-print" style={{ fontSize: '12px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.6 }}>
-            日付をクリックすると下に詳細が表示されます → 「時間帯を追加」で項目を作成 → トレーナー・アシスタントの名前をクリックすると即担当になります（もう一度押すと解除）→ トレーナーは「自動でシフト候補を作成」で出勤回数が均等になるよう自動でも割り当てられます
+            日付をクリックすると下に詳細が表示されます → 「時間帯を追加」で項目を作成 → トレーナー・アシスタントの名前をクリックすると即担当になります（もう一度押すと解除）
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', marginBottom: '24px' }}>

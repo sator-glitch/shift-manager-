@@ -22,6 +22,24 @@ function isClosedOn(ws, dateStr, dayOfWeek) {
 
 const DEFAULT_CATEGORIES = ['シャンプー', 'カラー', 'ブロー', 'カット'];
 
+// 練習項目ごとの色は、登録順（categories配列のインデックス）でこのパレットを巡回して自動的に割り当てる
+const CATEGORY_COLOR_PALETTE = [
+  '#E63946', // 赤
+  '#4361EE', // 青
+  '#2A9D8F', // 緑（ティール）
+  '#F4A300', // 黄土・オレンジ
+  '#9D4EDD', // 紫
+  '#06A77D', // エメラルドグリーン
+  '#EF476F', // ピンク・マゼンタ
+  '#118AB2', // シアン
+];
+
+function categoryColor(categories, categoryName) {
+  const idx = (categories || []).indexOf(categoryName);
+  if (idx < 0) return '#9C9486';
+  return CATEGORY_COLOR_PALETTE[idx % CATEGORY_COLOR_PALETTE.length];
+}
+
 function getMonthDates(year, month) {
   const dates = [];
   const last = new Date(year, month + 1, 0).getDate();
@@ -163,6 +181,8 @@ export default function ShiftManager() {
   const [selectedOffPersonId, setSelectedOffPersonId] = useState(null);
   const [selectedOffPersonType, setSelectedOffPersonType] = useState('trainer');
   const [bulkOffWeekdays, setBulkOffWeekdays] = useState([]);
+  const [balanceFilterCategory, setBalanceFilterCategory] = useState(null);
+  const [showCountsOnCalendar, setShowCountsOnCalendar] = useState(true);
 
   // Load workspace list (and migrate legacy single-workspace data if present)
   useEffect(() => {
@@ -741,14 +761,21 @@ export default function ShiftManager() {
   // トレーナーだけを自動で割り当てる。アシスタントは手動配置済みの前提で、
   // そのセッションのアシスタント数に応じた帯ルール（固定）でトレーナー人数を決める。
   // 休みで対応可能なトレーナーが少ない場合は、目安より少ない人数になる（休み優先）。
+  // 公平性（出勤回数バランス）は練習項目ごとに別物として判定する。
   function autoAssign() {
     const practiceDateStrs = Object.keys(practiceDays).filter(ds => {
       const [y, m] = ds.split('-').map(Number);
       return y === year && m === month + 1;
     }).sort();
 
+    // trainerCounts[trainerId][category] = この処理中に割り当てた回数
     const trainerCounts = {};
-    trainers.forEach(t => trainerCounts[t.id] = 0);
+    trainers.forEach(t => { trainerCounts[t.id] = {}; });
+    const getCount = (id, cat) => trainerCounts[id]?.[cat] || 0;
+    const incCount = (id, cat) => {
+      if (!trainerCounts[id]) trainerCounts[id] = {};
+      trainerCounts[id][cat] = (trainerCounts[id][cat] || 0) + 1;
+    };
 
     const next = { ...practiceDays };
 
@@ -766,15 +793,16 @@ export default function ShiftManager() {
       const availableTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
 
       const sessions = day.sessions.map(session => {
+        const cat = session.category || '未分類';
         const assistantCount = (session.assigned?.assistants || []).length;
         // アシスタント数 × 比率を目安にする（最低1人）
         // 帯ルール（固定）：アシスタント1〜3人→トレーナー最大2人、4〜6人→最大3人、
         // 7〜9人→最大4人、以降も3人ごとに+1人。常に帯の最大値を目標にする。
         const target = Math.ceil(assistantCount / 3) + 1;
 
-        const sortedTrainers = [...availableTrainerIds].sort((a, b) => trainerCounts[a] - trainerCounts[b]);
+        const sortedTrainers = [...availableTrainerIds].sort((a, b) => getCount(a, cat) - getCount(b, cat));
         const assignedTrainers = sortedTrainers.slice(0, Math.min(target, sortedTrainers.length));
-        assignedTrainers.forEach(id => trainerCounts[id] = (trainerCounts[id] || 0) + 1);
+        assignedTrainers.forEach(id => incCount(id, cat));
 
         return { ...session, assigned: { trainers: assignedTrainers, assistants: session.assigned?.assistants || [] } };
       });
@@ -797,22 +825,36 @@ export default function ShiftManager() {
 
   const trainerMonthCounts = trainers.map(t => {
     let count = 0;
+    const byCategory = {};
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
       if (y !== year || m !== month + 1) return;
-      (day.sessions || []).forEach(s => { if (s.assigned?.trainers?.includes(t.id)) count++; });
+      (day.sessions || []).forEach(s => {
+        if (s.assigned?.trainers?.includes(t.id)) {
+          count++;
+          const cat = s.category || '未分類';
+          byCategory[cat] = (byCategory[cat] || 0) + 1;
+        }
+      });
     });
-    return { ...t, count };
+    return { ...t, count, byCategory };
   });
 
   const assistantMonthCounts = assistants.map(a => {
     let count = 0;
+    const byCategory = {};
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
       if (y !== year || m !== month + 1) return;
-      (day.sessions || []).forEach(s => { if (s.assigned?.assistants?.includes(a.id)) count++; });
+      (day.sessions || []).forEach(s => {
+        if (s.assigned?.assistants?.includes(a.id)) {
+          count++;
+          const cat = s.category || '未分類';
+          byCategory[cat] = (byCategory[cat] || 0) + 1;
+        }
+      });
     });
-    return { ...a, count };
+    return { ...a, count, byCategory };
   });
 
   if (!workspacesLoaded || (activeWorkspaceId && !loaded)) {
@@ -1339,6 +1381,7 @@ export default function ShiftManager() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
             {categories.map(c => (
               <span key={c} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '7px 12px', borderRadius: '8px', background: '#FAF8F4', border: '1px solid #EEE9DE' }}>
+                <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: categoryColor(categories, c), flexShrink: 0 }} />
                 {c}
                 {isUnlocked && (
                   <button onClick={() => removeCategory(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', display: 'flex' }}>
@@ -1456,6 +1499,10 @@ export default function ShiftManager() {
               <button onClick={() => changeMonth(1)} className="no-print" style={{ background: '#FFFFFF', border: '1px solid #EEE9DE', borderRadius: '8px', padding: '6px', cursor: 'pointer', display: 'flex' }}>
                 <ChevronRight size={16} />
               </button>
+              <button onClick={() => setShowCountsOnCalendar(v => !v)} className="no-print"
+                style={{ fontSize: '11px', padding: '7px 12px', borderRadius: '8px', border: '1px solid #EEE9DE', background: showCountsOnCalendar ? '#EAF1ED' : '#FFFFFF', color: showCountsOnCalendar ? '#4A6B5A' : '#8A8378', cursor: 'pointer', fontWeight: 600 }}>
+                T/A人数表示：{showCountsOnCalendar ? 'ON' : 'OFF'}
+              </button>
             </div>
             {isUnlocked && (
               <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1483,10 +1530,13 @@ export default function ShiftManager() {
               const closedDay = isClosedOn(activeWorkspace, ds, d.getDay());
               const trainerSet = new Set();
               const assistantSet = new Set();
+              const categorySet = new Set();
               (day?.sessions || []).forEach(s => {
                 (s.assigned?.trainers || []).forEach(id => trainerSet.add(id));
                 (s.assigned?.assistants || []).forEach(id => assistantSet.add(id));
+                if (s.category) categorySet.add(s.category);
               });
+              const dayCategoryColors = Array.from(categorySet).map(c => categoryColor(categories, c));
               return (
                 <button
                   key={ds}
@@ -1496,17 +1546,24 @@ export default function ShiftManager() {
                     border: isSelected ? '2px solid #2B2823' : (closedDay ? '1.5px solid #B0746A' : (isPractice ? '1.5px solid #4A6B5A' : '1px solid #EEE9DE')),
                     background: isSelected ? '#FFF6E8' : (closedDay ? '#F8EDEA' : (isPractice ? '#EAF1ED' : '#FFFFFF')),
                     cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                    padding: '4px'
+                    padding: '4px', position: 'relative', overflow: 'hidden'
                   }}
                 >
                   <span style={{ fontSize: '13px', fontWeight: (isPractice || closedDay) ? 700 : 500, color: closedDay ? '#B0746A' : (isPractice ? '#2B4A3A' : '#2B2823') }}>{d.getDate()}</span>
                   {closedDay && (
                     <span style={{ fontSize: '9px', color: '#B0746A', marginTop: '2px' }}>定休日</span>
                   )}
-                  {!closedDay && isPractice && (
+                  {!closedDay && isPractice && showCountsOnCalendar && (
                     <span style={{ fontSize: '9px', color: '#4A6B5A', marginTop: '2px' }}>
                       T{trainerSet.size}/A{assistantSet.size}
                     </span>
+                  )}
+                  {!closedDay && dayCategoryColors.length > 0 && (
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', height: '4px' }}>
+                      {dayCategoryColors.map((color, i) => (
+                        <div key={i} style={{ flex: 1, background: color }} />
+                      ))}
+                    </div>
                   )}
                 </button>
               );
@@ -1565,6 +1622,7 @@ export default function ShiftManager() {
                       <div key={session.id} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '12px', background: '#FCFBF8' }}>
                         {isUnlocked ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: categoryColor(categories, session.category), flexShrink: 0 }} />
                             <select value={session.category} onChange={e => updateSession(ds, session.id, { category: e.target.value })}
                               style={{ fontSize: '12px', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', fontWeight: 600, color: '#2B4A3A' }}>
                               {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1595,7 +1653,8 @@ export default function ShiftManager() {
                             )}
                           </div>
                         ) : (
-                          <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '10px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: categoryColor(categories, session.category), flexShrink: 0 }} />
                             {session.category}　{session.startTime}〜{session.endTime}
                           </div>
                         )}
@@ -1606,7 +1665,7 @@ export default function ShiftManager() {
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                               {isUnlocked ? trainers.map(t => {
                                 const on = session.assigned?.trainers?.includes(t.id);
-                                const count = trainerMonthCounts.find(tc => tc.id === t.id)?.count ?? 0;
+                                const count = trainerMonthCounts.find(tc => tc.id === t.id)?.byCategory?.[session.category] ?? 0;
                                 const personOff = (t.offDates || []).includes(ds);
                                 const blocked = closedToday || personOff;
                                 return (
@@ -1703,7 +1762,26 @@ export default function ShiftManager() {
 
           {isUnlocked && (trainers.length > 0 || assistants.length > 0) && (
             <div className="no-print" style={{ marginTop: '24px', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #EEE9DE', padding: '16px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>今月の出勤回数バランス</div>
+              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>今月の勉強会回数バランス</div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+                <button onClick={() => setBalanceFilterCategory(null)}
+                  style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '999px', border: balanceFilterCategory === null ? '1px solid #2B2823' : '1px solid #EEE9DE', background: balanceFilterCategory === null ? '#2B2823' : '#FFFFFF', color: balanceFilterCategory === null ? '#FAF8F4' : '#2B2823', cursor: 'pointer', fontWeight: 600 }}>
+                  合計
+                </button>
+                {categories.map(cat => {
+                  const isSel = balanceFilterCategory === cat;
+                  const color = categoryColor(categories, cat);
+                  return (
+                    <button key={cat} onClick={() => setBalanceFilterCategory(cat)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', padding: '6px 12px', borderRadius: '999px', border: isSel ? `1px solid ${color}` : '1px solid #EEE9DE', background: isSel ? color : '#FFFFFF', color: isSel ? '#FFFFFF' : '#2B2823', cursor: 'pointer', fontWeight: 600 }}>
+                      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: isSel ? '#FFFFFF' : color, flexShrink: 0 }} />
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
                   <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>トレーナー</div>
@@ -1711,18 +1789,22 @@ export default function ShiftManager() {
                     {trainerMonthCounts.map(t => (
                       <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                         <span>{t.name}</span>
-                        <span style={{ fontWeight: 700, color: t.count >= 3 && t.count <= 4 ? '#4A6B5A' : '#B08A4A' }}>{t.count}回</span>
+                        <span style={{ fontWeight: 700, color: '#2B2823' }}>
+                          {balanceFilterCategory === null ? t.count : (t.byCategory[balanceFilterCategory] || 0)}回
+                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div>
                   <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>アシスタント</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
                     {assistantMonthCounts.map(a => (
                       <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                         <span>{a.name}</span>
-                        <span style={{ fontWeight: 700 }}>{a.count}回</span>
+                        <span style={{ fontWeight: 700, color: '#2B2823' }}>
+                          {balanceFilterCategory === null ? a.count : (a.byCategory[balanceFilterCategory] || 0)}回
+                        </span>
                       </div>
                     ))}
                   </div>

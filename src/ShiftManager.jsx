@@ -183,6 +183,7 @@ export default function ShiftManager() {
   const [bulkOffWeekdays, setBulkOffWeekdays] = useState([]);
   const [balanceFilterCategory, setBalanceFilterCategory] = useState(null);
   const [showCountsOnCalendar, setShowCountsOnCalendar] = useState(true);
+  const [expandedVisitStatsId, setExpandedVisitStatsId] = useState(null);
 
   // Load workspace list (and migrate legacy single-workspace data if present)
   useEffect(() => {
@@ -275,6 +276,22 @@ export default function ShiftManager() {
       setLoaded(true);
     }
     load();
+  }, [activeWorkspaceId]);
+
+  // 店舗が選択されるたびに訪問カウントを記録する（総管理者・店舗管理者・閲覧者どの立場でも記録）
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    const todayStr = fmtDate(new Date());
+    const ws = workspaces.find(w => w.id === activeWorkspaceId);
+    if (!ws) return;
+    const stats = ws.visitStats || { total: 0, daily: {} };
+    const newStats = {
+      total: (stats.total || 0) + 1,
+      daily: { ...(stats.daily || {}), [todayStr]: ((stats.daily || {})[todayStr] || 0) + 1 }
+    };
+    const next = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, visitStats: newStats } : w);
+    setWorkspaces(next);
+    window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(next)).catch(e => console.error('訪問カウントの保存に失敗しました', e));
   }, [activeWorkspaceId]);
 
   const persist = useCallback(async (workspaceId, next) => {
@@ -949,37 +966,59 @@ export default function ShiftManager() {
 
           {hasMasterAccess && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {workspaces.map(w => (
-              <div
-                key={w.id}
-                draggable={hasMasterAccess}
-                onDragStart={() => hasMasterAccess && handleWorkspaceDragStart(w.id)}
-                onDragOver={(e) => hasMasterAccess && handleWorkspaceDragOver(e, w.id)}
-                onDragEnd={() => hasMasterAccess && handleWorkspaceDragEnd()}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '4px',
-                  borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF',
-                  opacity: draggedWorkspaceId === w.id ? 0.5 : 1
-                }}
-              >
-                {hasMasterAccess && (
-                  <div style={{ padding: '0 4px 0 12px', cursor: 'grab', color: '#C9C2B2', fontSize: '16px', lineHeight: 1, userSelect: 'none' }} title="ドラッグして並べ替え">⠿</div>
-                )}
-                <button
-                  onClick={() => setActiveWorkspaceId(w.id)}
-                  style={{
-                    flex: 1, padding: '16px 18px', borderRadius: '12px',
-                    border: 'none', background: 'transparent',
-                    color: '#1F1C18', fontSize: '15px', fontWeight: 700,
-                    cursor: 'pointer', textAlign: 'left',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-                  }}
+            {workspaces.map(w => {
+              const visitStats = w.visitStats || { total: 0, daily: {} };
+              const isExpanded = expandedVisitStatsId === w.id;
+              const dailyEntries = Object.entries(visitStats.daily || {}).sort((a, b) => b[0].localeCompare(a[0]));
+              return (
+              <div key={w.id} style={{ display: 'flex', flexDirection: 'column', gap: '0', borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF', opacity: draggedWorkspaceId === w.id ? 0.5 : 1 }}>
+                <div
+                  draggable={hasMasterAccess}
+                  onDragStart={() => hasMasterAccess && handleWorkspaceDragStart(w.id)}
+                  onDragOver={(e) => hasMasterAccess && handleWorkspaceDragOver(e, w.id)}
+                  onDragEnd={() => hasMasterAccess && handleWorkspaceDragEnd()}
+                  style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                 >
-                  {w.name}
-                  <span style={{ fontSize: '12px', color: '#B0A99A', fontWeight: 500 }}>{w.password ? '編集に制限あり' : ''}</span>
-                </button>
+                  <div style={{ padding: '0 4px 0 12px', cursor: 'grab', color: '#C9C2B2', fontSize: '16px', lineHeight: 1, userSelect: 'none' }} title="ドラッグして並べ替え">⠿</div>
+                  <button
+                    onClick={() => setActiveWorkspaceId(w.id)}
+                    style={{
+                      flex: 1, padding: '16px 18px', borderRadius: '12px',
+                      border: 'none', background: 'transparent',
+                      color: '#1F1C18', fontSize: '15px', fontWeight: 700,
+                      cursor: 'pointer', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                    }}
+                  >
+                    {w.name}
+                    <span style={{ fontSize: '12px', color: '#B0A99A', fontWeight: 500 }}>{w.password ? '編集に制限あり' : ''}</span>
+                  </button>
+                  <button
+                    onClick={() => setExpandedVisitStatsId(isExpanded ? null : w.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '6px 10px', marginRight: '8px', borderRadius: '8px', border: '1px solid #EEE9DE', background: isExpanded ? '#FAF8F4' : '#FFFFFF', color: '#8A8378', cursor: 'pointer', fontWeight: 600, flexShrink: 0 }}>
+                    訪問{visitStats.total}回
+                  </button>
+                </div>
+                {isExpanded && (
+                  <div style={{ borderTop: '1px solid #EEE9DE', padding: '12px 18px', maxHeight: '220px', overflowY: 'auto' }}>
+                    <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '8px' }}>累計{visitStats.total}回（日別）</div>
+                    {dailyEntries.length === 0 ? (
+                      <div style={{ fontSize: '12px', color: '#B0A99A' }}>まだ訪問記録がありません</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {dailyEntries.map(([ds, c]) => (
+                          <div key={ds} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                            <span style={{ color: '#2B2823' }}>{ds}</span>
+                            <span style={{ fontWeight: 700, color: '#4A6B5A' }}>{c}回</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
+              );
+            })}
             {hasMasterAccess && (
               <button onClick={addWorkspace} style={{ padding: '14px 18px', borderRadius: '12px', border: '1px dashed #C9C2B2', background: 'transparent', color: '#8A8378', fontSize: '14px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 <Plus size={16} /> 新しい店舗（シフト）を追加

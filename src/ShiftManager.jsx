@@ -1026,21 +1026,36 @@ export default function ShiftManager() {
     return [...(ids || [])].sort((a, b) => list.findIndex(p => p.id === a) - list.findIndex(p => p.id === b));
   }
 
+  // 前月の計算用
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+
   const trainerMonthCounts = trainers.map(t => {
     let count = 0;
     const byCategory = {};
+    let prevCount = 0;
+    const prevByCategory = {};
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
-      if (y !== year || m !== month + 1) return;
-      (day.sessions || []).forEach(s => {
-        if (s.assigned?.trainers?.includes(t.id)) {
-          count++;
-          const cat = s.category || '未分類';
-          byCategory[cat] = (byCategory[cat] || 0) + 1;
-        }
-      });
+      if (y === year && m === month + 1) {
+        (day.sessions || []).forEach(s => {
+          if (s.assigned?.trainers?.includes(t.id)) {
+            count++;
+            const cat = s.category || '未分類';
+            byCategory[cat] = (byCategory[cat] || 0) + 1;
+          }
+        });
+      } else if (y === prevYear && m === prevMonth + 1) {
+        (day.sessions || []).forEach(s => {
+          if (s.assigned?.trainers?.includes(t.id)) {
+            prevCount++;
+            const cat = s.category || '未分類';
+            prevByCategory[cat] = (prevByCategory[cat] || 0) + 1;
+          }
+        });
+      }
     });
-    return { ...t, count, byCategory };
+    return { ...t, count, byCategory, prevCount, prevByCategory };
   });
 
   const assistantMonthCounts = assistants.map(a => {
@@ -2223,16 +2238,24 @@ export default function ShiftManager() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
-                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>トレーナー</div>
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>
+                    トレーナー
+                    <span style={{ marginLeft: '6px', color: '#C9C2B2' }}>（今月 / 前月）</span>
+                  </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    {trainerMonthCounts.map(t => (
-                      <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <span>{t.name}</span>
-                        <span style={{ fontWeight: 700, color: '#2B2823' }}>
-                          {balanceFilterCategory === null ? t.count : (t.byCategory[balanceFilterCategory] || 0)}回
-                        </span>
-                      </div>
-                    ))}
+                    {trainerMonthCounts.map(t => {
+                      const thisCount = balanceFilterCategory === null ? t.count : (t.byCategory[balanceFilterCategory] || 0);
+                      const prevCount = balanceFilterCategory === null ? t.prevCount : (t.prevByCategory[balanceFilterCategory] || 0);
+                      return (
+                        <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                          <span>{t.name}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontWeight: 700, color: '#2B2823' }}>{thisCount}回</span>
+                            <span style={{ fontSize: '10px', color: '#B0A99A' }}>/ {prevCount}回</span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
                 <div>

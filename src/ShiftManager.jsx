@@ -41,6 +41,24 @@ function categoryColor(categories, categoryName) {
   return CATEGORY_COLOR_PALETTE[idx % CATEGORY_COLOR_PALETTE.length];
 }
 
+// アシスタントタイプ用は別のパレット（カテゴリ色と被らないよう色相をずらす）
+const ASSISTANT_TYPE_COLOR_PALETTE = [
+  '#FF6B6B', // 赤
+  '#4ECDC4', // ティール
+  '#FFE66D', // 黄
+  '#A8E6CF', // ミントグリーン
+  '#FF8B94', // ピンク
+  '#B8B8FF', // ラベンダー
+  '#FFDAC1', // ピーチ
+  '#C7CEEA', // スレートブルー
+];
+
+function assistantTypeColor(assistantTypes, typeName) {
+  const idx = (assistantTypes || []).indexOf(typeName);
+  if (idx < 0) return '#9C9486';
+  return ASSISTANT_TYPE_COLOR_PALETTE[idx % ASSISTANT_TYPE_COLOR_PALETTE.length];
+}
+
 function getMonthDates(year, month) {
   const dates = [];
   const last = new Date(year, month + 1, 0).getDate();
@@ -923,12 +941,31 @@ export default function ShiftManager() {
   }
 
   // その日の参加アシスタントを追加/解除する
+  // 解除した場合はdayPairings（割り振り結果）からも自動で取り除く
   function toggleDayParticipant(dateStr, assistantId) {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
       const current = day.dayParticipants || [];
-      const next = current.includes(assistantId) ? current.filter(id => id !== assistantId) : [...current, assistantId];
+      const isRemoving = current.includes(assistantId);
+      const next = isRemoving ? current.filter(id => id !== assistantId) : [...current, assistantId];
+
+      // 参加解除の場合、割り振り結果からも取り除いてセッションも更新
+      if (isRemoving && day.dayPairings) {
+        const pairings = {};
+        Object.entries(day.dayPairings).forEach(([tid, aids]) => {
+          pairings[tid] = aids.filter(aid => aid !== assistantId);
+        });
+        const sessions = (day.sessions || []).map(session => ({
+          ...session,
+          assigned: {
+            trainers: session.assigned?.trainers || [],
+            assistants: (session.assigned?.assistants || []).filter(aid => aid !== assistantId)
+          }
+        }));
+        return { ...prev, [dateStr]: { ...day, dayParticipants: next, dayPairings: pairings, sessions } };
+      }
+
       return { ...prev, [dateStr]: { ...day, dayParticipants: next } };
     });
   }
@@ -1585,6 +1622,7 @@ export default function ShiftManager() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
               {assistantTypes.map(t => (
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '7px 12px', borderRadius: '8px', background: '#FAF8F4', border: '1px solid #EEE9DE' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: assistantTypeColor(assistantTypes, t), flexShrink: 0 }} />
                   {t}
                   {isUnlocked && assistantTypes.length > 1 && (
                     <button onClick={() => removeAssistantType(t)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', display: 'flex' }}>
@@ -1840,9 +1878,10 @@ export default function ShiftManager() {
                                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                       {assistantTypes.map(t => {
                                         const isSel = currentType === t;
+                                        const tColor = assistantTypeColor(assistantTypes, t);
                                         return (
                                           <button key={t} onClick={() => setAssistantDayType(ds, a.id, isSel ? null : t)}
-                                            style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '999px', border: isSel ? '1px solid #4361EE' : '1px solid #E2DCCC', background: isSel ? '#4361EE' : '#FFFFFF', color: isSel ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
+                                            style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '999px', border: isSel ? `1px solid ${tColor}` : '1px solid #E2DCCC', background: isSel ? tColor : '#FFFFFF', color: isSel ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
                                             {t}
                                           </button>
                                         );
@@ -1862,9 +1901,11 @@ export default function ShiftManager() {
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                             {(day.dayParticipants || []).map(aid => {
                               const aType = (day.dayTypeMap || {})[aid];
+                              const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
                               return (
-                                <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4' }}>
-                                  {nameById(aid, 'assistant')}{aType ? `（${aType}）` : ''}
+                                <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  {nameById(aid, 'assistant')}
+                                  {aType && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: tColor, color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
                                 </span>
                               );
                             })}
@@ -1952,7 +1993,7 @@ export default function ShiftManager() {
                                           onClick={() => toggleManualPairing(ds, manualPairingTrainerId, aid)}
                                           style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: isAssigned ? '1px solid #4361EE' : (assignedToOther ? '1px solid #E2DCCC' : '1px solid #E2DCCC'), background: isAssigned ? '#4361EE' : (assignedToOther ? '#F5F5F5' : '#FFFFFF'), color: isAssigned ? '#FFFFFF' : (assignedToOther ? '#B0A99A' : '#2B2823'), cursor: 'pointer', fontWeight: isAssigned ? 700 : 500 }}>
                                           {nameById(aid, 'assistant')}
-                                          {aType && <span style={{ fontSize: '9px', marginLeft: '4px', opacity: 0.8 }}>({aType})</span>}
+                                          {aType && <span style={{ fontSize: '9px', marginLeft: '4px', padding: '1px 5px', borderRadius: '999px', background: assistantTypeColor(assistantTypes, aType), color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
                                           {assignedToOther && !isAssigned && <span style={{ fontSize: '9px', marginLeft: '4px', color: '#B0A99A' }}>他に割済</span>}
                                         </button>
                                       );
@@ -1975,12 +2016,14 @@ export default function ShiftManager() {
                                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px' }}>
                                   {nameById(tid, 'trainer')}
                                 </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '8px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
                                   {aids.length > 0 ? aids.map(aid => {
                                     const aType = (day.dayTypeMap || {})[aid];
+                                    const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
                                     return (
-                                      <div key={aid} style={{ fontSize: '12px', color: '#4A6B5A' }}>
-                                        {nameById(aid, 'assistant')}{aType ? `（${aType}）` : ''}
+                                      <div key={aid} style={{ fontSize: '12px', color: '#2B2823', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        {nameById(aid, 'assistant')}
+                                        {aType && <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: tColor, color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
                                       </div>
                                     );
                                   }) : (
@@ -2096,7 +2139,7 @@ export default function ShiftManager() {
                                     style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: blocked ? '1px solid #EEE9DE' : (on ? '1px solid #2B2823' : '1px solid #EEE9DE'), background: blocked ? '#F3F1EC' : (on ? '#2B2823' : '#FAF8F4'), color: blocked ? '#C9C2B2' : (on ? '#FAF8F4' : '#9C9486'), cursor: blocked ? 'not-allowed' : 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
                                     {a.name}
                                     {aType && !blocked && (
-                                      <span style={{ fontSize: '9px', padding: '2px 5px', borderRadius: '999px', background: on ? 'rgba(255,255,255,0.2)' : '#4361EE', color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>
+                                      <span style={{ fontSize: '9px', padding: '2px 5px', borderRadius: '999px', background: assistantTypeColor(assistantTypes, aType), color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>
                                     )}
                                     {blocked && (
                                       <span style={{ fontSize: '10px', opacity: 0.7 }}>{closedToday ? '定休日' : '休み'}</span>

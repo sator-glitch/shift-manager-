@@ -112,7 +112,7 @@ function parseCSVRow(line) {
 }
 
 // ─── メインコンポーネント ─────────────────────────────────────────
-export default function CurriculumApp() {
+export default function CurriculumApp({ embedded = false }) {
   // ── 認証状態
   const [authLevel, setAuthLevel] = useState(null); // null=未ログイン, 'viewer', 'admin', 'master'
   const [pwInput, setPwInput] = useState('');
@@ -153,6 +153,11 @@ export default function CurriculumApp() {
   // パスワード読み込み
   // ────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (embedded) {
+      setAuthLevel('master');
+      setLoadingAuth(false);
+      return;
+    }
     async function loadPw() {
       try {
         const r1 = await window.storage.get(MASTER_PW_KEY);
@@ -165,7 +170,7 @@ export default function CurriculumApp() {
       setLoadingAuth(false);
     }
     loadPw();
-  }, []);
+  }, [embedded]);
 
   // ────────────────────────────────────────────────────────────────
   // データ読み込み
@@ -403,7 +408,8 @@ export default function CurriculumApp() {
   return (
     <div style={{ minHeight:'100vh', background:'#FAF8F4', fontFamily:"'Hiragino Sans','Noto Sans JP',system-ui,sans-serif" }}>
 
-      {/* ヘッダー */}
+      {/* ヘッダー（埋め込み時は非表示） */}
+      {!embedded && (
       <div style={{ background:'#FFFFFF', borderBottom:'1px solid #EEE9DE', padding:'0 16px', position:'sticky', top:0, zIndex:10 }}>
         <div style={{ maxWidth:'900px', margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'space-between', height:'52px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
@@ -441,6 +447,7 @@ export default function CurriculumApp() {
           ))}
         </div>
       </div>
+      )}
 
       {/* PW設定フォーム */}
       {showMasterPwForm && (
@@ -469,6 +476,23 @@ export default function CurriculumApp() {
       )}
 
       <div style={{ maxWidth:'900px', margin:'0 auto', padding:'20px 16px' }}>
+
+        {/* 埋め込みモード時のタブ */}
+        {embedded && (
+          <div style={{ display:'flex', gap:'4px', background:'#EFEAE0', borderRadius:'10px', padding:'4px', marginBottom:'20px' }}>
+            {[
+              { key:'matrix', label:'合格マトリクス', icon:<BookOpen size={13}/> },
+              { key:'compare', label:'学年比較', icon:<BarChart2 size={13}/> },
+              { key:'staff', label:'スタッフ', icon:<Users size={13}/> },
+              { key:'curriculum', label:'カリキュラム', icon:<BookOpen size={13}/> },
+            ].map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                style={{ display:'flex', alignItems:'center', gap:'5px', padding:'8px 14px', borderRadius:'8px', border:'none', background: tab===t.key ? '#FFFFFF' : 'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer', boxShadow: tab===t.key ? '0 1px 4px rgba(43,40,35,0.08)' : 'none' }}>
+                {t.icon}{t.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── 合格マトリクス ── */}
         {tab === 'matrix' && (

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, X, ChevronLeft, ChevronRight, Users, BookOpen, BarChart2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, Trash2, X, Upload, AlertCircle, CheckCircle, Users, BookOpen, BarChart2 } from 'lucide-react';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY = 'curriculum_v1';
@@ -42,6 +42,75 @@ function cohortColor(cohorts, cohort) {
   return COHORT_COLORS[idx >= 0 ? idx % COHORT_COLORS.length : 0];
 }
 
+// ─── CSV → 日付正規化 ────────────────────────────────────────────
+// 2024/5/10, 2024-05-10, 24/5/10 など様々な形式に対応
+function normalizeDate(raw) {
+  if (!raw || !raw.trim()) return null;
+  const s = raw.trim().replace(/\//g, '-');
+  // YYYY-M-D or YYYY-MM-DD
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const [, y, mo, d] = m;
+    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  // YY-M-D（2桁年）
+  const m2 = s.match(/^(\d{2})-(\d{1,2})-(\d{1,2})$/);
+  if (m2) {
+    const [, y, mo, d] = m2;
+    return `20${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  return null;
+}
+
+// ─── CSVパース ───────────────────────────────────────────────────
+// フォーマット：1行目=ヘッダー（空セル, スタッフ名1, スタッフ名2...）
+//               2行目以降=カリキュラム名, 合格日1, 合格日2...
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { error: '行数が少なすぎます（ヘッダー行＋データ行が必要です）' };
+
+  // ヘッダー行（1行目）をパース
+  const header = parseCSVRow(lines[0]);
+  if (header.length < 2) return { error: '列が少なすぎます（カリキュラム列＋スタッフ列が必要です）' };
+
+  // スタッフ名（2列目以降）
+  const staffNames = header.slice(1).filter(n => n.trim());
+
+  // データ行
+  const curriculaNames = [];
+  const recordMatrix = {}; // { staffName: { curriculumName: dateStr } }
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVRow(lines[i]);
+    const currName = row[0]?.trim();
+    if (!currName) continue;
+    curriculaNames.push(currName);
+    staffNames.forEach((sName, si) => {
+      const raw = row[si + 1];
+      const date = normalizeDate(raw);
+      if (date) {
+        if (!recordMatrix[sName]) recordMatrix[sName] = {};
+        recordMatrix[sName][currName] = date;
+      }
+    });
+  }
+
+  return { staffNames, curriculaNames, recordMatrix };
+}
+
+function parseCSVRow(line) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else { cur += c; }
+  }
+  result.push(cur);
+  return result.map(s => s.trim().replace(/^"|"$/g, ''));
+}
+
 // ─── メインコンポーネント ─────────────────────────────────────────
 export default function CurriculumApp() {
   // ── 認証状態
@@ -72,6 +141,13 @@ export default function CurriculumApp() {
   const [newStaffDate,    setNewStaffDate]    = useState('');
   const [newStaffCohort,  setNewStaffCohort]  = useState('');
   const [newCurrName,     setNewCurrName]     = useState('');
+
+  // ── CSV読み込み
+  const csvInputRef = useRef(null);
+  const [csvPreview, setCsvPreview]   = useState(null);  // パース結果のプレビュー
+  const [csvFileName, setCsvFileName] = useState('');
+  const [csvError, setCsvError]       = useState('');
+  const [csvImporting, setCsvImporting] = useState(false);
 
   // ────────────────────────────────────────────────────────────────
   // パスワード読み込み
@@ -211,8 +287,73 @@ export default function CurriculumApp() {
   }
 
   // ────────────────────────────────────────────────────────────────
-  // フィルタリング済みスタッフ
+  // CSV読み込み
   // ────────────────────────────────────────────────────────────────
+  function handleCSVFile(file) {
+    if (!file) return;
+    setCsvError('');
+    setCsvPreview(null);
+    setCsvFileName(file.name);
+
+    // ファイル名から入社年度を推定（例: 2024年入社.csv → '2024年入社'）
+    const cohortFromName = file.name
+      .replace(/\.csv$/i, '')
+      .replace(/\s+/g, '')
+      || file.name.replace(/\.csv$/i, '');
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const result = parseCSV(text);
+      if (result.error) { setCsvError(result.error); return; }
+      setCsvPreview({ ...result, cohort: cohortFromName });
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  // CSVプレビューの内容をFirebaseにインポート
+  function importCSV() {
+    if (!csvPreview) return;
+    setCsvImporting(true);
+    const { staffNames, curriculaNames, recordMatrix, cohort } = csvPreview;
+
+    update(d => {
+      let next = { ...d, curricula: [...d.curricula], staff: [...d.staff], records: { ...d.records } };
+
+      // カリキュラムを追加（重複スキップ）
+      curriculaNames.forEach(name => {
+        if (!next.curricula.find(c => c.name === name)) {
+          next.curricula.push({ id: uid(), name });
+        }
+      });
+
+      // スタッフを追加（名前一致でスキップ）
+      staffNames.forEach(name => {
+        if (!next.staff.find(s => s.name === name)) {
+          next.staff.push({ id: uid(), name, joinDate: '', cohort });
+        }
+      });
+
+      // 合格記録をマージ
+      staffNames.forEach(sName => {
+        const staff = next.staff.find(s => s.name === sName);
+        if (!staff) return;
+        const staffRec = recordMatrix[sName] || {};
+        const existing = next.records[staff.id] || {};
+        Object.entries(staffRec).forEach(([currName, date]) => {
+          const curr = next.curricula.find(c => c.name === currName);
+          if (curr) existing[curr.id] = date;
+        });
+        next.records = { ...next.records, [staff.id]: existing };
+      });
+
+      return next;
+    });
+
+    setCsvPreview(null);
+    setCsvFileName('');
+    setCsvImporting(false);
+  }
   const displayedStaff = selectedCohort === 'all'
     ? data.staff
     : data.staff.filter(s => s.cohort === selectedCohort);
@@ -548,10 +689,75 @@ export default function CurriculumApp() {
 
         {/* ── カリキュラム管理 ── */}
         {tab === 'curriculum' && (
-          <div style={{ maxWidth:'480px' }}>
+          <div style={{ maxWidth:'560px' }}>
+
+            {/* CSV一括インポート */}
             {canEdit && (
               <div style={{ background:'#FFFFFF', borderRadius:'12px', padding:'16px', border:'1px solid #EEE9DE', marginBottom:'20px' }}>
-                <div style={{ fontSize:'13px', fontWeight:700, marginBottom:'12px', color:'#1F1C18' }}>カリキュラムを追加</div>
+                <div style={{ fontSize:'13px', fontWeight:700, marginBottom:'4px', color:'#1F1C18' }}>CSVから一括インポート</div>
+                <div style={{ fontSize:'11px', color:'#9C9486', marginBottom:'12px', lineHeight:1.6 }}>
+                  Google スプレッドシート → ファイル → CSVでダウンロード → アップロード。<br/>
+                  フォーマット：<b>1行目</b>に「空欄, スタッフA, スタッフB…」、<b>2行目以降</b>に「カリキュラム名, 合格日, 合格日…」<br/>
+                  ファイル名が入社年度として自動で設定されます（例：<code>2024年入社.csv</code>）
+                </div>
+
+                {/* ドロップゾーン */}
+                <div
+                  onClick={() => csvInputRef.current?.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); handleCSVFile(e.dataTransfer.files[0]); }}
+                  style={{ border:'2px dashed #C9C2B2', borderRadius:'10px', padding:'20px', textAlign:'center', cursor:'pointer', background:'#FAF8F4', marginBottom:'12px' }}>
+                  <Upload size={20} style={{ color:'#B0A99A', marginBottom:'6px' }} />
+                  <div style={{ fontSize:'12px', color:'#8A8378', fontWeight:600 }}>
+                    {csvFileName || 'CSVファイルをクリックして選択、またはドラッグ＆ドロップ'}
+                  </div>
+                  <input ref={csvInputRef} type="file" accept=".csv" style={{ display:'none' }}
+                    onChange={e => handleCSVFile(e.target.files[0])} />
+                </div>
+
+                {csvError && (
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', color:'#E63946', marginBottom:'10px' }}>
+                    <AlertCircle size={14} />{csvError}
+                  </div>
+                )}
+
+                {/* プレビュー */}
+                {csvPreview && (
+                  <div style={{ background:'#FAF8F4', borderRadius:'8px', padding:'12px', marginBottom:'12px' }}>
+                    <div style={{ fontSize:'12px', fontWeight:700, color:'#2B2823', marginBottom:'8px' }}>
+                      インポート内容の確認
+                    </div>
+                    <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'4px' }}>
+                      ✓ 入社年度：<b>{csvPreview.cohort}</b>
+                    </div>
+                    <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'4px' }}>
+                      ✓ スタッフ：{csvPreview.staffNames.length}人（{csvPreview.staffNames.join('、')}）
+                    </div>
+                    <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'10px' }}>
+                      ✓ カリキュラム：{csvPreview.curriculaNames.length}項目
+                    </div>
+                    <div style={{ fontSize:'11px', color:'#9C9486', marginBottom:'10px' }}>
+                      既存のスタッフ・カリキュラムと重複する場合はスキップします。合格記録は上書きされます。入社日は別途スタッフタブで設定してください。
+                    </div>
+                    <div style={{ display:'flex', gap:'8px' }}>
+                      <button onClick={importCSV} disabled={csvImporting}
+                        style={{ display:'flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>
+                        <CheckCircle size={14} /> インポート実行
+                      </button>
+                      <button onClick={() => { setCsvPreview(null); setCsvFileName(''); }}
+                        style={{ padding:'9px 14px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', cursor:'pointer' }}>
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 手動追加 */}
+            {canEdit && (
+              <div style={{ background:'#FFFFFF', borderRadius:'12px', padding:'16px', border:'1px solid #EEE9DE', marginBottom:'20px' }}>
+                <div style={{ fontSize:'13px', fontWeight:700, marginBottom:'12px', color:'#1F1C18' }}>カリキュラムを手動で追加</div>
                 <div style={{ display:'flex', gap:'8px' }}>
                   <input value={newCurrName} onChange={e => setNewCurrName(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && addCurr()}

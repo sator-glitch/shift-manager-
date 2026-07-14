@@ -32,7 +32,29 @@ const INIT_DATA = {
   records: {},     // { staffId: { curriculumId: 'YYYY-MM-DD' } }
 };
 
-// ─── カラーパレット（コホート別） ────────────────────────────────
+// ─── 合格日の年度カラー ──────────────────────────────────────────
+// 2026/4〜2027/3 = 1年度目（緑）、2027/4〜2028/3 = 2年度目（青）...
+const NENDO_COLORS = [
+  { bg: '#D4EDDA', text: '#1A6B32', label: '26年度' }, // 1年度目
+  { bg: '#CCE5FF', text: '#0056B3', label: '27年度' }, // 2年度目
+  { bg: '#FFF3CD', text: '#856404', label: '28年度' }, // 3年度目
+  { bg: '#F8D7DA', text: '#721C24', label: '29年度' }, // 4年度目
+  { bg: '#E2D9F3', text: '#4A1F8C', label: '30年度' }, // 5年度目
+];
+
+function nendoIndex(dateStr) {
+  if (!dateStr) return null;
+  const [y, m] = dateStr.split('-').map(Number);
+  // 4月以降が次の年度（2026/4→0、2027/4→1...）
+  const nendo = m >= 4 ? y - 2026 : y - 2027;
+  return Math.max(0, nendo);
+}
+
+function nendoColor(dateStr) {
+  const idx = nendoIndex(dateStr);
+  if (idx === null) return null;
+  return NENDO_COLORS[Math.min(idx, NENDO_COLORS.length - 1)];
+}
 const COHORT_COLORS = [
   '#4361EE','#E63946','#2A9D8F','#F4A300',
   '#9D4EDD','#06A77D','#EF476F','#118AB2',
@@ -511,7 +533,14 @@ export default function CurriculumApp({ embedded = false }) {
               ))}
             </div>
 
-            {data.curricula.length === 0 || displayedStaff.length === 0 ? (
+            {/* 年度カラー凡例 */}
+            <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
+              {NENDO_COLORS.map((nc, i) => (
+                <span key={i} style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'999px', background: nc.bg, color: nc.text, fontWeight:700 }}>
+                  {nc.label}
+                </span>
+              ))}
+            </div>
               <div style={{ textAlign:'center', padding:'60px 0', color:'#B0A99A', fontSize:'13px' }}>
                 {data.curricula.length === 0 ? 'まずカリキュラムを追加してください' : 'スタッフがいません'}
               </div>
@@ -547,18 +576,28 @@ export default function CurriculumApp({ embedded = false }) {
                           </td>
                           {data.curricula.map(c => {
                             const date = rec[c.id];
+                            const nc = date ? nendoColor(date) : null;
                             return (
-                              <td key={c.id} style={{ padding:'8px 10px', borderBottom:'1px solid #F0EDE6', textAlign:'center' }}>
+                              <td key={c.id} style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center' }}>
                                 {canEdit ? (
-                                  <input
-                                    type="date" value={date || ''}
-                                    onChange={e => setRecord(s.id, c.id, e.target.value || undefined)}
-                                    style={{ fontSize:'11px', padding:'4px 6px', borderRadius:'6px', border: date ? `1px solid ${color}` : '1px solid #E2DCCC', background: date ? `${color}18` : '#FFFFFF', color:'#2B2823', width:'120px' }}
-                                  />
+                                  <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'3px' }}>
+                                    <input
+                                      type="date" value={date || ''}
+                                      onChange={e => setRecord(s.id, c.id, e.target.value || undefined)}
+                                      style={{ fontSize:'11px', padding:'4px 6px', borderRadius:'6px', border: date ? `1px solid ${nc?.text}` : '1px solid #E2DCCC', background: nc ? nc.bg : '#FFFFFF', color: nc ? nc.text : '#2B2823', width:'120px', fontWeight: date ? 700 : 400 }}
+                                    />
+                                    {date && nc && (
+                                      <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background: nc.text, color:'#FFFFFF', fontWeight:700 }}>{nc.label}</span>
+                                    )}
+                                  </div>
                                 ) : (
-                                  date
-                                    ? <span style={{ fontSize:'12px', color:color, fontWeight:700 }}>{fmtDate(date)}</span>
-                                    : <span style={{ fontSize:'12px', color:'#D0CCC4' }}>―</span>
+                                  date && nc ? (
+                                    <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700, display:'inline-block' }}>
+                                      {fmtDate(date)}
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize:'12px', color:'#D0CCC4' }}>―</span>
+                                  )
                                 )}
                               </td>
                             );

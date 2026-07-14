@@ -138,7 +138,7 @@ function parseCSVRow(line) {
 }
 
 // ─── メインコンポーネント ─────────────────────────────────────────
-export default function CurriculumApp({ embedded = false }) {
+export default function CurriculumApp({ embedded = false, embeddedCanEdit = true }) {
   // ── 認証状態
   const [authLevel, setAuthLevel] = useState(null); // null=未ログイン, 'viewer', 'admin', 'master'
   const [pwInput, setPwInput] = useState('');
@@ -242,8 +242,8 @@ export default function CurriculumApp({ embedded = false }) {
 
   function loginAsViewer() { setAuthLevel('viewer'); }
 
-  const canEdit = authLevel === 'master' || authLevel === 'admin';
-  const isMaster = authLevel === 'master';
+  const canEdit = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'admin');
+  const isMaster = embedded ? embeddedCanEdit : authLevel === 'master';
 
   // ────────────────────────────────────────────────────────────────
   // コホート一覧
@@ -554,15 +554,15 @@ export default function CurriculumApp({ embedded = false }) {
                 {data.curricula.length === 0 ? 'まずカリキュラムを追加してください' : 'スタッフがいません'}
               </div>
             ) : (
-              <div style={{ overflowX:'auto' }}>
+              <div style={{ overflowX:'auto', overflowY:'auto', maxHeight:'70vh' }}>
                 <table style={{ borderCollapse:'collapse', width:'100%', minWidth:`${180 + data.curricula.length * 120}px` }}>
-                  <thead>
+                  <thead style={{ position:'sticky', top:0, zIndex:3 }}>
                     <tr style={{ background:'#F3F1EC' }}>
-                      <th style={{ padding:'10px 14px', textAlign:'left', fontSize:'12px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', position:'sticky', left:0, background:'#F3F1EC', minWidth:'120px' }}>
+                      <th style={{ padding:'10px 14px', textAlign:'left', fontSize:'12px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', position:'sticky', left:0, top:0, zIndex:4, background:'#F3F1EC', minWidth:'120px' }}>
                         スタッフ
                       </th>
                       {data.curricula.map(c => (
-                        <th key={c.id} style={{ padding:'10px 12px', textAlign:'center', fontSize:'11px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', minWidth:'110px', whiteSpace:'nowrap' }}>
+                        <th key={c.id} style={{ padding:'10px 12px', textAlign:'center', fontSize:'11px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', minWidth:'110px', whiteSpace:'nowrap', position:'sticky', top:0, background:'#F3F1EC', zIndex:3 }}>
                           {c.name}
                         </th>
                       ))}

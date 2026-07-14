@@ -68,15 +68,18 @@ function cohortColor(cohorts, cohort) {
 // 2024/5/10, 2024-05-10, 24/5/10 など様々な形式に対応
 function normalizeDate(raw) {
   if (!raw || !raw.trim()) return null;
-  const s = raw.trim().replace(/\//g, '-');
+  const s = raw.trim();
+  // ○や◯は飛び級合格として扱う
+  if (s === '○' || s === '◯' || s === '◎' || s === '●') return '◎';
+  const normalized = s.replace(/\//g, '-');
   // YYYY-M-D or YYYY-MM-DD
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) {
     const [, y, mo, d] = m;
     return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
   }
   // YY-M-D（2桁年）
-  const m2 = s.match(/^(\d{2})-(\d{1,2})-(\d{1,2})$/);
+  const m2 = normalized.match(/^(\d{2})-(\d{1,2})-(\d{1,2})$/);
   if (m2) {
     const [, y, mo, d] = m2;
     return `20${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
@@ -256,6 +259,8 @@ export default function CurriculumApp({ embedded = false }) {
     setNewStaffName(''); setNewStaffDate(''); setNewStaffCohort('');
   }
   function removeStaff(id) {
+    const s = data.staff.find(s => s.id === id);
+    if (!window.confirm(`「${s?.name}」を削除しますか？\nこのスタッフの合格記録も全て削除されます。`)) return;
     update(d => {
       const records = { ...d.records };
       delete records[id];
@@ -534,12 +539,15 @@ export default function CurriculumApp({ embedded = false }) {
             </div>
 
             {/* 年度カラー凡例 */}
-            <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
+            <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px', alignItems:'center' }}>
               {NENDO_COLORS.map((nc, i) => (
                 <span key={i} style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'999px', background: nc.bg, color: nc.text, fontWeight:700 }}>
                   {nc.label}
                 </span>
               ))}
+              <span style={{ fontSize:'11px', padding:'3px 10px', borderRadius:'999px', background:'#FFF8DC', color:'#7B5800', fontWeight:800 }}>
+                ◎ 飛び級合格
+              </span>
             </div>
               <div style={{ textAlign:'center', padding:'60px 0', color:'#B0A99A', fontSize:'13px' }}>
                 {data.curricula.length === 0 ? 'まずカリキュラムを追加してください' : 'スタッフがいません'}
@@ -575,26 +583,35 @@ export default function CurriculumApp({ embedded = false }) {
                             </div>
                           </td>
                           {data.curricula.map(c => {
-                            const date = rec[c.id];
-                            const nc = date ? nendoColor(date) : null;
+                            const val = rec[c.id]; // 日付文字列 or '◎' or undefined
+                            const isSkip = val === '◎';
+                            const nc = (!isSkip && val) ? nendoColor(val) : null;
                             return (
                               <td key={c.id} style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center' }}>
                                 {canEdit ? (
                                   <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'3px' }}>
-                                    <input
-                                      type="date" value={date || ''}
-                                      onChange={e => setRecord(s.id, c.id, e.target.value || undefined)}
-                                      style={{ fontSize:'11px', padding:'4px 6px', borderRadius:'6px', border: date ? `1px solid ${nc?.text}` : '1px solid #E2DCCC', background: nc ? nc.bg : '#FFFFFF', color: nc ? nc.text : '#2B2823', width:'120px', fontWeight: date ? 700 : 400 }}
-                                    />
-                                    {date && nc && (
+                                    <div style={{ display:'flex', gap:'4px', alignItems:'center' }}>
+                                      <input
+                                        type="date" value={(!isSkip && val) ? val : ''}
+                                        onChange={e => setRecord(s.id, c.id, e.target.value || undefined)}
+                                        style={{ fontSize:'11px', padding:'3px 5px', borderRadius:'6px', border: (val && !isSkip) ? `1px solid ${nc?.text}` : '1px solid #E2DCCC', background: nc ? nc.bg : '#FFFFFF', color: nc ? nc.text : '#2B2823', width:'108px', fontWeight: val ? 700 : 400 }}
+                                      />
+                                      <button
+                                        onClick={() => setRecord(s.id, c.id, isSkip ? undefined : '◎')}
+                                        title="飛び級合格（◎）"
+                                        style={{ fontSize:'12px', padding:'3px 7px', borderRadius:'6px', border: isSkip ? '1px solid #B8860B' : '1px solid #E2DCCC', background: isSkip ? '#FFD700' : '#FFFFFF', color: isSkip ? '#7B5800' : '#B0A99A', cursor:'pointer', fontWeight: isSkip ? 800 : 400 }}>
+                                        ◎
+                                      </button>
+                                    </div>
+                                    {val && !isSkip && nc && (
                                       <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background: nc.text, color:'#FFFFFF', fontWeight:700 }}>{nc.label}</span>
                                     )}
                                   </div>
                                 ) : (
-                                  date && nc ? (
-                                    <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700, display:'inline-block' }}>
-                                      {fmtDate(date)}
-                                    </span>
+                                  isSkip ? (
+                                    <span style={{ fontSize:'13px', padding:'3px 8px', borderRadius:'6px', background:'#FFF8DC', color:'#7B5800', fontWeight:800, display:'inline-block' }}>◎</span>
+                                  ) : (val && nc) ? (
+                                    <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700, display:'inline-block' }}>{fmtDate(val)}</span>
                                   ) : (
                                     <span style={{ fontSize:'12px', color:'#D0CCC4' }}>―</span>
                                   )

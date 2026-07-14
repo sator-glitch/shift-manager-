@@ -33,20 +33,21 @@ const INIT_DATA = {
 };
 
 // ─── 合格日の年度カラー ──────────────────────────────────────────
-// 2026/4〜2027/3 = 1年度目（緑）、2027/4〜2028/3 = 2年度目（青）...
+// 2023/4〜2024/3 = 1年度目（緑）、2024/4〜2025/3 = 2年度目（青）...
 const NENDO_COLORS = [
-  { bg: '#D4EDDA', text: '#1A6B32', label: '26年度' }, // 1年度目
-  { bg: '#CCE5FF', text: '#0056B3', label: '27年度' }, // 2年度目
-  { bg: '#FFF3CD', text: '#856404', label: '28年度' }, // 3年度目
-  { bg: '#F8D7DA', text: '#721C24', label: '29年度' }, // 4年度目
-  { bg: '#E2D9F3', text: '#4A1F8C', label: '30年度' }, // 5年度目
+  { bg: '#D4EDDA', text: '#1A6B32', label: '23年度' }, // 2023/4〜2024/3
+  { bg: '#CCE5FF', text: '#0056B3', label: '24年度' }, // 2024/4〜2025/3
+  { bg: '#FFF3CD', text: '#856404', label: '25年度' }, // 2025/4〜2026/3
+  { bg: '#F8D7DA', text: '#721C24', label: '26年度' }, // 2026/4〜2027/3
+  { bg: '#E2D9F3', text: '#4A1F8C', label: '27年度' }, // 2027/4〜2028/3
+  { bg: '#FFDDC1', text: '#7B3000', label: '28年度' }, // 2028/4〜2029/3
 ];
 
 function nendoIndex(dateStr) {
-  if (!dateStr) return null;
+  if (!dateStr || dateStr === '◎') return null;
   const [y, m] = dateStr.split('-').map(Number);
-  // 4月以降が次の年度（2026/4→0、2027/4→1...）
-  const nendo = m >= 4 ? y - 2026 : y - 2027;
+  // 4月以降が当該年度（2023/4→0、2024/4→1...）
+  const nendo = m >= 4 ? y - 2023 : y - 2024;
   return Math.max(0, nendo);
 }
 

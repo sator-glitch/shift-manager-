@@ -95,33 +95,43 @@ function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return { error: '行数が少なすぎます（ヘッダー行＋データ行が必要です）' };
 
-  // ヘッダー行（1行目）をパース
   const header = parseCSVRow(lines[0]);
   if (header.length < 2) return { error: '列が少なすぎます（カリキュラム列＋スタッフ列が必要です）' };
 
-  // スタッフ名（2列目以降）
   const staffNames = header.slice(1).filter(n => n.trim());
 
-  // データ行
+  // __joinDate__行を探して入社日を取得
+  let joinDateFromCSV = '';
   const curriculaNames = [];
-  const recordMatrix = {}; // { staffName: { curriculumName: dateStr } }
+  const recordMatrix = {};
 
   for (let i = 1; i < lines.length; i++) {
     const row = parseCSVRow(lines[i]);
-    const currName = row[0]?.trim();
-    if (!currName) continue;
-    curriculaNames.push(currName);
+    const first = row[0]?.trim();
+    if (!first) continue;
+
+    if (first === '__joinDate__') {
+      // 全員同じ入社日（最初のスタッフのセルを使用）
+      const raw = row[1]?.trim();
+      if (raw) {
+        const d = normalizeDate(raw);
+        if (d && d !== '◎') joinDateFromCSV = d;
+      }
+      continue;
+    }
+
+    curriculaNames.push(first);
     staffNames.forEach((sName, si) => {
       const raw = row[si + 1];
       const date = normalizeDate(raw);
       if (date) {
         if (!recordMatrix[sName]) recordMatrix[sName] = {};
-        recordMatrix[sName][currName] = date;
+        recordMatrix[sName][first] = date;
       }
     });
   }
 
-  return { staffNames, curriculaNames, recordMatrix };
+  return { staffNames, curriculaNames, recordMatrix, joinDateFromCSV };
 }
 
 function parseCSVRow(line) {
@@ -388,7 +398,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       // スタッフを追加（名前一致でスキップ）
       staffNames.forEach(name => {
         if (!next.staff.find(s => s.name === name)) {
-          next.staff.push({ id: uid(), name, joinDate: '', cohort });
+          next.staff.push({ id: uid(), name, joinDate: csvPreview.joinDateFromCSV || '', cohort });
         }
       });
 
@@ -890,6 +900,11 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                     <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'4px' }}>
                       ✓ 入社年度：<b>{csvPreview.cohort}</b>
                     </div>
+                    {csvPreview.joinDateFromCSV && (
+                      <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'4px' }}>
+                        ✓ 入社日：<b>{fmtDate(csvPreview.joinDateFromCSV)}</b>（全員）
+                      </div>
+                    )}
                     <div style={{ fontSize:'12px', color:'#4A6B5A', marginBottom:'4px' }}>
                       ✓ スタッフ：{csvPreview.staffNames.length}人（{csvPreview.staffNames.join('、')}）
                     </div>

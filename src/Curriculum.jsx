@@ -168,6 +168,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [newStaffCohort,  setNewStaffCohort]  = useState('');
   const [newCurrName,     setNewCurrName]     = useState('');
 
+  // ── スタッフ編集
+  const [editingStaffId,   setEditingStaffId]   = useState(null);
+  const [editStaffName,    setEditStaffName]    = useState('');
+  const [editStaffDate,    setEditStaffDate]    = useState('');
+  const [editStaffCohort,  setEditStaffCohort]  = useState('');
+
   // ── CSV読み込み
   const csvInputRef = useRef(null);
   const [csvPreview, setCsvPreview]   = useState(null);  // パース結果のプレビュー
@@ -267,6 +273,25 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       delete records[id];
       return { ...d, staff: d.staff.filter(s => s.id !== id), records };
     });
+  }
+
+  function startEditStaff(s) {
+    setEditingStaffId(s.id);
+    setEditStaffName(s.name);
+    setEditStaffDate(s.joinDate || '');
+    setEditStaffCohort(s.cohort || '');
+  }
+
+  function saveEditStaff() {
+    if (!editStaffName.trim()) return;
+    update(d => ({
+      ...d,
+      staff: d.staff.map(s => s.id === editingStaffId
+        ? { ...s, name: editStaffName.trim(), joinDate: editStaffDate, cohort: editStaffCohort.trim() || '未設定' }
+        : s
+      )
+    }));
+    setEditingStaffId(null);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -729,18 +754,45 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                       <span style={{ width:'8px', height:'8px', borderRadius:'50%', background:color }} />{cohort}
                     </div>
                     {members.map(s => (
-                      <div key={s.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE', marginBottom:'6px' }}>
-                        <div>
-                          <div style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{s.name}</div>
-                          <div style={{ fontSize:'11px', color:'#B0A99A' }}>
-                            入社日：{s.joinDate ? fmtDate(s.joinDate) : '未登録'}
+                      <div key={s.id} style={{ background:'#FFFFFF', borderRadius:'10px', border: editingStaffId===s.id ? '1px solid #4361EE' : '1px solid #EEE9DE', marginBottom:'6px', overflow:'hidden' }}>
+                        {editingStaffId === s.id ? (
+                          <div style={{ padding:'12px 14px', display:'flex', flexDirection:'column', gap:'8px' }}>
+                            <input value={editStaffName} onChange={e => setEditStaffName(e.target.value)}
+                              placeholder="名前" style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px' }} />
+                            <input value={editStaffCohort} onChange={e => setEditStaffCohort(e.target.value)}
+                              placeholder="入社年度（例：2024年入社）" style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px' }} />
+                            <div>
+                              <div style={{ fontSize:'11px', color:'#8A8378', marginBottom:'3px' }}>入社日</div>
+                              <input type="date" value={editStaffDate} onChange={e => setEditStaffDate(e.target.value)}
+                                style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px', width:'100%', boxSizing:'border-box' }} />
+                            </div>
+                            <div style={{ display:'flex', gap:'8px' }}>
+                              <button onClick={saveEditStaff}
+                                style={{ flex:1, padding:'8px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>
+                                保存
+                              </button>
+                              <button onClick={() => setEditingStaffId(null)}
+                                style={{ padding:'8px 14px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', cursor:'pointer' }}>
+                                キャンセル
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                        {canEdit && (
-                          <button onClick={() => removeStaff(s.id)}
-                            style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px' }}>
-                            <Trash2 size={14} />
-                          </button>
+                        ) : (
+                          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px' }}>
+                            <div style={{ flex:1, cursor: canEdit ? 'pointer' : 'default' }} onClick={() => canEdit && startEditStaff(s)}>
+                              <div style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{s.name}</div>
+                              <div style={{ fontSize:'11px', color:'#B0A99A' }}>
+                                入社日：{s.joinDate ? fmtDate(s.joinDate) : '未登録'}
+                                {canEdit && <span style={{ marginLeft:'6px', color:'#C9C2B2', fontSize:'10px' }}>タップで編集</span>}
+                              </div>
+                            </div>
+                            {canEdit && (
+                              <button onClick={() => removeStaff(s.id)}
+                                style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px', flexShrink:0 }}>
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -749,18 +801,45 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               })}
               {/* コホートなし */}
               {data.staff.filter(s => !s.cohort || s.cohort === '未設定').map(s => (
-                <div key={s.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE', marginBottom:'6px' }}>
-                  <div>
-                    <div style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{s.name}</div>
-                    <div style={{ fontSize:'11px', color:'#B0A99A' }}>
-                      {s.cohort || '未設定'}・入社日：{s.joinDate ? fmtDate(s.joinDate) : '未登録'}
+                <div key={s.id} style={{ background:'#FFFFFF', borderRadius:'10px', border: editingStaffId===s.id ? '1px solid #4361EE' : '1px solid #EEE9DE', marginBottom:'6px', overflow:'hidden' }}>
+                  {editingStaffId === s.id ? (
+                    <div style={{ padding:'12px 14px', display:'flex', flexDirection:'column', gap:'8px' }}>
+                      <input value={editStaffName} onChange={e => setEditStaffName(e.target.value)}
+                        placeholder="名前" style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px' }} />
+                      <input value={editStaffCohort} onChange={e => setEditStaffCohort(e.target.value)}
+                        placeholder="入社年度（例：2024年入社）" style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px' }} />
+                      <div>
+                        <div style={{ fontSize:'11px', color:'#8A8378', marginBottom:'3px' }}>入社日</div>
+                        <input type="date" value={editStaffDate} onChange={e => setEditStaffDate(e.target.value)}
+                          style={{ padding:'7px 10px', borderRadius:'7px', border:'1px solid #E2DCCC', fontSize:'13px', width:'100%', boxSizing:'border-box' }} />
+                      </div>
+                      <div style={{ display:'flex', gap:'8px' }}>
+                        <button onClick={saveEditStaff}
+                          style={{ flex:1, padding:'8px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>
+                          保存
+                        </button>
+                        <button onClick={() => setEditingStaffId(null)}
+                          style={{ padding:'8px 14px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', cursor:'pointer' }}>
+                          キャンセル
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  {canEdit && (
-                    <button onClick={() => removeStaff(s.id)}
-                      style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px' }}>
-                      <Trash2 size={14} />
-                    </button>
+                  ) : (
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px' }}>
+                      <div style={{ flex:1, cursor: canEdit ? 'pointer' : 'default' }} onClick={() => canEdit && startEditStaff(s)}>
+                        <div style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{s.name}</div>
+                        <div style={{ fontSize:'11px', color:'#B0A99A' }}>
+                          {s.cohort || '未設定'}・入社日：{s.joinDate ? fmtDate(s.joinDate) : '未登録'}
+                          {canEdit && <span style={{ marginLeft:'6px', color:'#C9C2B2', fontSize:'10px' }}>タップで編集</span>}
+                        </div>
+                      </div>
+                      {canEdit && (
+                        <button onClick={() => removeStaff(s.id)}
+                          style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px', flexShrink:0 }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

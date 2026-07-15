@@ -147,6 +147,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [csvPreview, setCsvPreview]     = useState(null);
   const [csvFileName, setCsvFileName]   = useState('');
   const [csvError, setCsvError]         = useState('');
+  const csvInputRef = useRef(null);
 
   // 権限フラグ
   const canEdit    = (authLevel === 'master' || authLevel === 'schedule') || (embedded && embeddedCanEdit);

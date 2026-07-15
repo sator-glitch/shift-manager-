@@ -752,7 +752,7 @@ export default function ShiftManager() {
       if (!day) {
         return { ...prev, [dateStr]: { sessions: [newSession(categories[0])] } };
       }
-      return { ...prev, [dateStr]: { ...day, sessions: [...day.sessions, newSession(categories[0])] } };
+      return { ...prev, [dateStr]: { ...day, sessions: [...(day.sessions || []), newSession(categories[0])] } };
     });
   }
 
@@ -760,7 +760,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const sessions = day.sessions.filter(s => s.id !== sessionId);
+      const sessions = (day.sessions || []).filter(s => s.id !== sessionId);
       if (sessions.length === 0) {
         const next = { ...prev };
         delete next[dateStr];
@@ -770,7 +770,7 @@ export default function ShiftManager() {
     });
     setSelectedDate(prevSel => {
       const day = practiceDays[dateStr];
-      if (day && day.sessions.length === 1) return null;
+      if (day && (day.sessions || []).length === 1) return null;
       return prevSel;
     });
   }
@@ -779,7 +779,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const sessions = day.sessions.map(s => s.id === sessionId ? { ...s, ...patch } : s);
+      const sessions = (day.sessions || []).map(s => s.id === sessionId ? { ...s, ...patch } : s);
       return { ...prev, [dateStr]: { ...day, sessions } };
     });
   }
@@ -789,7 +789,7 @@ export default function ShiftManager() {
       const day = prev[dateStr];
       if (!day) return prev;
       const key = type === 'trainer' ? 'trainerAvail' : 'assistantAvail';
-      const sessions = day.sessions.map(s => {
+      const sessions = (day.sessions || []).map(s => {
         if (s.id !== sessionId) return s;
         const list = s[key] || [];
         const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
@@ -804,7 +804,7 @@ export default function ShiftManager() {
       const day = prev[dateStr];
       if (!day) return prev;
       const key = type === 'trainer' ? 'trainers' : 'assistants';
-      const sessions = day.sessions.map(s => {
+      const sessions = (day.sessions || []).map(s => {
         if (s.id !== sessionId) return s;
         const list = s.assigned?.[key] || [];
         const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
@@ -848,7 +848,7 @@ export default function ShiftManager() {
       // その日に休みでないトレーナーだけが対象
       const availableTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
 
-      const sessions = day.sessions.map(session => {
+      const sessions = (day.sessions || []).map(session => {
         const cat = session.category || '未分類';
         const assistantCount = (session.assigned?.assistants || []).length;
         // アシスタント数 × 比率を目安にする（最低1人）
@@ -2035,7 +2035,7 @@ export default function ShiftManager() {
 
                   {day && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {day.sessions.map(session => (
+                    {(day.sessions || []).map(session => (
                       <div key={session.id} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '12px', background: '#FCFBF8' }}>
                         {isUnlocked ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
@@ -2063,7 +2063,7 @@ export default function ShiftManager() {
                               style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
                               {MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
-                            {day.sessions.length > 1 && (
+                            {(day.sessions || []).length > 1 && (
                               <button onClick={() => removeSession(ds, session.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', marginLeft: 'auto' }}>
                                 <Trash2 size={14} />
                               </button>
@@ -2163,7 +2163,7 @@ export default function ShiftManager() {
                   <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
                     {d.getMonth() + 1}月{d.getDate()}日（{DAY_LABELS[d.getDay()]}）
                   </div>
-                  {day.sessions.map(session => (
+                  {(day.sessions || []).map(session => (
                     <div key={session.id} style={{ marginBottom: '10px', paddingLeft: '8px' }}>
                       <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '4px' }}>
                         {session.category}　{session.startTime}〜{session.endTime}

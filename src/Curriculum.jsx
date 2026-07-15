@@ -141,7 +141,9 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [newStaffDate, setNewStaffDate]   = useState('');
   const [newStaffCohort, setNewStaffCohort] = useState('');
   const [newCurrName, setNewCurrName]   = useState('');
-  const csvInputRef = useRef(null);
+  const [showScheduleLogin, setShowScheduleLogin] = useState(false);
+  const [schedulePwInput, setSchedulePwInput]     = useState('');
+  const [schedulePwError, setSchedulePwError]     = useState('');
   const [csvPreview, setCsvPreview]     = useState(null);
   const [csvFileName, setCsvFileName]   = useState('');
   const [csvError, setCsvError]         = useState('');
@@ -407,6 +409,44 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
         {/* ── 合格マトリクス */}
         {tab === 'matrix' && (
           <div>
+            {/* 日程管理者ログインバー（管理者・閲覧者のみ表示） */}
+            {!canEdit && (
+              <div style={{ background:'#FFFDF9', border:'1px solid #EEE9DE', borderRadius:'10px', padding:'10px 14px', marginBottom:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
+                {showScheduleLogin ? (
+                  <>
+                    <span style={{ fontSize:'12px', color:'#8A8378' }}>日程管理者PW：</span>
+                    <input type="password" value={schedulePwInput} onChange={e => setSchedulePwInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          if (schedulePwInput === schedulePw) { setAuthLevel('schedule'); setShowScheduleLogin(false); setSchedulePwInput(''); setSchedulePwError(''); }
+                          else { setSchedulePwError('パスワードが違います'); }
+                        }
+                      }}
+                      placeholder="パスワードを入力"
+                      style={{ padding:'6px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', fontSize:'13px', width:'160px' }} />
+                    <button onClick={() => {
+                      if (schedulePwInput === schedulePw) { setAuthLevel('schedule'); setShowScheduleLogin(false); setSchedulePwInput(''); setSchedulePwError(''); }
+                      else { setSchedulePwError('パスワードが違います'); }
+                    }} style={{ padding:'6px 14px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+                      ログイン
+                    </button>
+                    <button onClick={() => { setShowScheduleLogin(false); setSchedulePwInput(''); setSchedulePwError(''); }}
+                      style={{ padding:'6px 12px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'12px', cursor:'pointer' }}>
+                      キャンセル
+                    </button>
+                    {schedulePwError && <span style={{ fontSize:'12px', color:'#E63946' }}>{schedulePwError}</span>}
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize:'12px', color:'#9C9486' }}>合格日を編集するには日程管理者でログインしてください</span>
+                    <button onClick={() => setShowScheduleLogin(true)}
+                      style={{ padding:'6px 14px', borderRadius:'8px', border:'1px solid #4361EE', background:'#FFFFFF', color:'#4361EE', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+                      日程管理者でログイン
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'8px' }}>
               {['all', ...cohorts].map(c => (
                 <button key={c} onClick={() => setSelectedCohort(c)}

@@ -149,10 +149,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [csvError, setCsvError]         = useState('');
 
   // 権限フラグ
-  const canEdit    = embedded ? embeddedCanEdit    : (authLevel === 'master' || authLevel === 'schedule');
-  const canManage  = embedded ? embeddedIsMaster   : (authLevel === 'master' || authLevel === 'admin');
-  const canViewAvg = embedded ? (embeddedCanViewAvg || embeddedCanEdit) : (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin');
-  const isMaster   = embedded ? embeddedIsMaster   : authLevel === 'master';
+  const canEdit    = (authLevel === 'master' || authLevel === 'schedule') || (embedded && embeddedCanEdit);
+  const canManage  = (authLevel === 'master' || authLevel === 'admin')   || (embedded && embeddedIsMaster);
+  const canViewAvg = (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin') || (embedded && (embeddedCanViewAvg || embeddedCanEdit));
+  const isMaster   = authLevel === 'master' || (embedded && embeddedIsMaster && !authLevel);
 
   // ── PW読み込み
   const CURR_AUTH_KEY = 'curriculum_auth_session';

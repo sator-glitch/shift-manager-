@@ -128,7 +128,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // UI
   const [tab, setTab]                   = useState('matrix');
   const [selectedCohort, setSelectedCohort] = useState('all');
-  const [openCurrIds, setOpenCurrIds]   = useState(new Set()); // 学年比較で開いている項目
+  const [openCurrId, setOpenCurrId] = useState(null); // 学年比較で開いている項目（1つのみ）
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [editStaffName, setEditStaffName]   = useState('');
   const [editStaffDate, setEditStaffDate]   = useState('');
@@ -308,13 +308,32 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     return daysSince(base, dateStr);
   }
 
-  // 項目ごとの開閉トグル
+  // 学年比較の開閉（1つだけ開く）
   function toggleCurr(id) {
-    setOpenCurrIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
+    setOpenCurrId(prev => prev === id ? null : id);
+  }
+
+  // 大項目グループ化：「中ロール人頭1」→ prefix「中ロール人頭」、suffix 1
+  function parseCurrName(name) {
+    const m = name.match(/^(.+?)(\d+)$/);
+    if (m) return { prefix: m[1].trim(), num: parseInt(m[2]) };
+    return { prefix: name, num: null };
+  }
+
+  // カリキュラムを大項目でグループ化
+  function buildCurrGroups(curricula) {
+    const groups = {}; // prefix → [{ id, name, num }]
+    const order = [];
+    curricula.forEach(c => {
+      const { prefix, num } = parseCurrName(c.name);
+      if (num !== null) {
+        if (!groups[prefix]) { groups[prefix] = []; order.push({ type: 'group', prefix }); }
+        groups[prefix].push({ ...c, num });
+      } else {
+        order.push({ type: 'single', curr: c });
+      }
     });
+    return { groups, order };
   }
 
   // ─── ローディング
@@ -531,70 +550,115 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
           <div>
             {!canViewAvg ? (
               <div style={{ textAlign:'center', padding:'60px 0', color:'#B0A99A', fontSize:'13px' }}>この機能は管理者以上のみ閲覧できます</div>
-            ) : (
-              <>
-                <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>入社日から合格日までの日数で比較します。入社日未登録のスタッフは除外します。</div>
-                <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-                  {data.curricula.map(c => {
-                    const cohortData = {};
-                    data.staff.forEach(s => {
-                      if (!s.joinDate) return;
-                      const val = (data.records[s.id] || {})[c.id];
-                      const days = calcDays(s, val);
-                      if (days === null) return;
-                      if (!cohortData[s.cohort]) cohortData[s.cohort] = [];
-                      cohortData[s.cohort].push({ name: s.name, days });
-                    });
-                    if (Object.keys(cohortData).length === 0) return null;
-                    const isOpen = openCurrIds.has(c.id);
-                    const allDays = Object.values(cohortData).flat().map(r => r.days);
-                    const maxDays = Math.max(...allDays, 1);
-                    return (
-                      <div key={c.id} style={{ background:'#FFFFFF', borderRadius:'12px', border:'1px solid #EEE9DE', overflow:'hidden' }}>
-                        <button onClick={() => toggleCurr(c.id)}
-                          style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', border:'none', background:'transparent', cursor:'pointer', textAlign:'left' }}>
-                          <span style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{c.name}</span>
-                          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-                            {Object.entries(cohortData).map(([cohort, entries]) => {
-                              const avg = Math.round(entries.reduce((s,e) => s+e.days,0) / entries.length);
-                              const col = cohortColor(cohorts, cohort);
-                              return <span key={cohort} style={{ fontSize:'10px', padding:'2px 7px', borderRadius:'999px', background: col, color:'#FFFFFF', fontWeight:700 }}>{cohort.replace('年入社','')}: {avg}日</span>;
-                            })}
-                            {isOpen ? <ChevronDown size={14} color="#9C9486"/> : <ChevronRight size={14} color="#9C9486"/>}
-                          </div>
-                        </button>
-                        {isOpen && (
-                          <div style={{ padding:'0 16px 14px', borderTop:'1px solid #F0EDE6' }}>
-                            {Object.entries(cohortData).sort((a,b) => a[0].localeCompare(b[0])).map(([cohort, entries]) => {
-                              const color = cohortColor(cohorts, cohort);
-                              const avg = Math.round(entries.reduce((s,e) => s+e.days,0) / entries.length);
-                              return (
-                                <div key={cohort} style={{ marginTop:'10px' }}>
-                                  <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'4px' }}>
-                                    <span style={{ width:'7px', height:'7px', borderRadius:'50%', background:color }} />
-                                    <span style={{ fontSize:'11px', fontWeight:700, color:'#2B2823' }}>{cohort}</span>
-                                    <span style={{ fontSize:'10px', color:'#9C9486' }}>平均 {avg}日</span>
-                                  </div>
-                                  {entries.sort((a,b) => a.days - b.days).map((e,i) => (
-                                    <div key={i} style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'3px' }}>
-                                      <span style={{ fontSize:'10px', color:'#8A8378', minWidth:'64px', textAlign:'right' }}>{e.name}</span>
-                                      <div style={{ flex:1, background:'#F3F1EC', borderRadius:'3px', height:'10px' }}>
-                                        <div style={{ width:`${(e.days/maxDays)*100}%`, background:color, borderRadius:'3px', height:'10px', minWidth:'3px' }} />
-                                      </div>
-                                      <span style={{ fontSize:'10px', color, fontWeight:700, minWidth:'32px' }}>{e.days}日</span>
+            ) : (() => {
+              const { groups, order } = buildCurrGroups(data.curricula);
+
+              // 大項目の合格日を計算：グループ内の最大番号の小項目の合格日
+              function getGroupDate(staffId, prefix) {
+                const items = groups[prefix] || [];
+                const sorted = [...items].sort((a,b) => b.num - a.num);
+                for (const item of sorted) {
+                  const val = (data.records[staffId] || {})[item.id];
+                  if (val && val !== '◎') return val;
+                  if (val === '◎') return '◎';
+                }
+                return undefined;
+              }
+
+              // 項目ごとのコホートデータを計算
+              function getCohortData(key, isGroup) {
+                const result = {};
+                data.staff.forEach(s => {
+                  if (!s.joinDate) return;
+                  const val = isGroup
+                    ? getGroupDate(s.id, key)
+                    : (data.records[s.id] || {})[key];
+                  const days = calcDays(s, val);
+                  if (days === null) return;
+                  if (!result[s.cohort]) result[s.cohort] = [];
+                  result[s.cohort].push({ name: s.name, days });
+                });
+                return result;
+              }
+
+              // 表示アイテムを構築（大項目はグループとして、単品はそのまま）
+              const items = [];
+              const seenPrefixes = new Set();
+              order.forEach(o => {
+                if (o.type === 'group' && !seenPrefixes.has(o.prefix)) {
+                  seenPrefixes.add(o.prefix);
+                  const cohortData = getCohortData(o.prefix, true);
+                  if (Object.keys(cohortData).length > 0) {
+                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix].sort((a,b) => a.num - b.num) });
+                  }
+                } else if (o.type === 'single') {
+                  const cohortData = getCohortData(o.curr.id, false);
+                  if (Object.keys(cohortData).length > 0) {
+                    items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData });
+                  }
+                }
+              });
+
+              return (
+                <>
+                  <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
+                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。数字サフィックスのある項目（デンマン人頭1〜4など）は大項目として最終合格日で集計。
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+                    {items.map(item => {
+                      const isOpen = openCurrId === item.key;
+                      const allDays = Object.values(item.cohortData).flat().map(r => r.days);
+                      const maxDays = Math.max(...allDays, 1);
+                      return (
+                        <div key={item.key} style={{ background:'#FFFFFF', borderRadius:'12px', border: isOpen ? '1px solid #4361EE' : '1px solid #EEE9DE', overflow:'hidden' }}>
+                          <button onClick={() => toggleCurr(item.key)}
+                            style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'11px 16px', border:'none', background: isOpen ? '#F5F8FF' : 'transparent', cursor:'pointer', textAlign:'left' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                              {item.isGroup && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'999px', background:'#EEF2FF', color:'#4361EE', fontWeight:700 }}>大項目</span>}
+                              <span style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{item.label}</span>
+                            </div>
+                            <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
+                              {Object.entries(item.cohortData).sort((a,b) => a[0].localeCompare(b[0])).map(([cohort, entries]) => {
+                                const avg = Math.round(entries.reduce((s,e) => s+e.days,0) / entries.length);
+                                const col = cohortColor(cohorts, cohort);
+                                return <span key={cohort} style={{ fontSize:'10px', padding:'2px 7px', borderRadius:'999px', background: col, color:'#FFFFFF', fontWeight:700 }}>{cohort.replace('年入社','')}: {avg}日</span>;
+                              })}
+                              {isOpen ? <ChevronDown size={14} color="#4361EE"/> : <ChevronRight size={14} color="#9C9486"/>}
+                            </div>
+                          </button>
+                          {isOpen && (
+                            <div style={{ padding:'0 16px 14px', borderTop:'1px solid #EEF2FF' }}>
+                              {Object.entries(item.cohortData).sort((a,b) => a[0].localeCompare(b[0])).map(([cohort, entries]) => {
+                                const color = cohortColor(cohorts, cohort);
+                                const avg = Math.round(entries.reduce((s,e) => s+e.days,0) / entries.length);
+                                return (
+                                  <div key={cohort} style={{ marginTop:'10px' }}>
+                                    <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'5px' }}>
+                                      <span style={{ width:'7px', height:'7px', borderRadius:'50%', background:color }} />
+                                      <span style={{ fontSize:'11px', fontWeight:700, color:'#2B2823' }}>{cohort}</span>
+                                      <span style={{ fontSize:'10px', color:'#9C9486' }}>平均 {avg}日</span>
                                     </div>
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                                    {entries.sort((a,b) => a.days - b.days).map((e,i) => (
+                                      <div key={i} style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'3px' }}>
+                                        <span style={{ fontSize:'10px', color:'#8A8378', minWidth:'72px', textAlign:'right' }}>{e.name}</span>
+                                        <div style={{ flex:1, background:'#F3F1EC', borderRadius:'3px', height:'10px' }}>
+                                          <div style={{ width:`${(e.days/maxDays)*100}%`, background:color, borderRadius:'3px', height:'10px', minWidth:'3px' }} />
+                                        </div>
+                                        <span style={{ fontSize:'10px', color, fontWeight:700, minWidth:'36px' }}>{e.days}日</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 

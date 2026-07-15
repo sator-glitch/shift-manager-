@@ -158,17 +158,15 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const CURR_AUTH_KEY = 'curriculum_auth_session';
 
   useEffect(() => {
-    if (embedded) {
-      // セッション中のログイン状態を復元
-      const saved = sessionStorage.getItem(CURR_AUTH_KEY);
-      if (saved) setAuthLevel(saved);
-      setLoadingAuth(false);
-      return;
-    }
     (async () => {
+      // embedded時もFirebaseからPWを読み込む
       try { const r = await window.storage.get(MASTER_PW_KEY);   if (r) setMasterPw(r.value); } catch {}
       try { const r = await window.storage.get(SCHEDULE_PW_KEY); if (r) setSchedulePw(r.value); } catch {}
       try { const r = await window.storage.get(ADMIN_PW_KEY);    if (r) setAdminPw(r.value); } catch {}
+      if (embedded) {
+        const saved = sessionStorage.getItem(CURR_AUTH_KEY);
+        if (saved) setAuthLevel(saved);
+      }
       setLoadingAuth(false);
     })();
   }, [embedded]);

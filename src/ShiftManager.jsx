@@ -92,7 +92,7 @@ function buildIcs(practiceDays, year, month, trainers, assistants, personId, per
     const [y, m, dd] = ds.split('-').map(Number);
     if (y !== year || m !== month + 1) return;
     const d = new Date(y, m - 1, dd);
-    (day.sessions || []).forEach((session, idx) => {
+    (day?.sessions || []).forEach((session, idx) => {
       const list = personType === 'trainer' ? session.assigned?.trainers : session.assigned?.assistants;
       if (personId && !(list || []).includes(personId)) return;
       const tIds = [...(session.assigned?.trainers || [])].sort((a, b) => trainers.findIndex(t => t.id === a) - trainers.findIndex(t => t.id === b));
@@ -752,7 +752,7 @@ export default function ShiftManager() {
       if (!day) {
         return { ...prev, [dateStr]: { sessions: [newSession(categories[0])] } };
       }
-      return { ...prev, [dateStr]: { ...day, sessions: [...(day.sessions || []), newSession(categories[0])] } };
+      return { ...prev, [dateStr]: { ...day, sessions: [...(day?.sessions || []), newSession(categories[0])] } };
     });
   }
 
@@ -760,7 +760,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const sessions = (day.sessions || []).filter(s => s.id !== sessionId);
+      const sessions = (day?.sessions || []).filter(s => s.id !== sessionId);
       if (sessions.length === 0) {
         const next = { ...prev };
         delete next[dateStr];
@@ -770,7 +770,7 @@ export default function ShiftManager() {
     });
     setSelectedDate(prevSel => {
       const day = practiceDays[dateStr];
-      if (day && (day.sessions || []).length === 1) return null;
+      if (day && (day?.sessions || []).length === 1) return null;
       return prevSel;
     });
   }
@@ -779,7 +779,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const sessions = (day.sessions || []).map(s => s.id === sessionId ? { ...s, ...patch } : s);
+      const sessions = (day?.sessions || []).map(s => s.id === sessionId ? { ...s, ...patch } : s);
       return { ...prev, [dateStr]: { ...day, sessions } };
     });
   }
@@ -789,7 +789,7 @@ export default function ShiftManager() {
       const day = prev[dateStr];
       if (!day) return prev;
       const key = type === 'trainer' ? 'trainerAvail' : 'assistantAvail';
-      const sessions = (day.sessions || []).map(s => {
+      const sessions = (day?.sessions || []).map(s => {
         if (s.id !== sessionId) return s;
         const list = s[key] || [];
         const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
@@ -804,7 +804,7 @@ export default function ShiftManager() {
       const day = prev[dateStr];
       if (!day) return prev;
       const key = type === 'trainer' ? 'trainers' : 'assistants';
-      const sessions = (day.sessions || []).map(s => {
+      const sessions = (day?.sessions || []).map(s => {
         if (s.id !== sessionId) return s;
         const list = s.assigned?.[key] || [];
         const next = list.includes(personId) ? list.filter(id => id !== personId) : [...list, personId];
@@ -848,7 +848,7 @@ export default function ShiftManager() {
       // その日に休みでないトレーナーだけが対象
       const availableTrainerIds = trainers.filter(t => !(t.offDates || []).includes(ds)).map(t => t.id);
 
-      const sessions = (day.sessions || []).map(session => {
+      const sessions = (day?.sessions || []).map(session => {
         const cat = session.category || '未分類';
         const assistantCount = (session.assigned?.assistants || []).length;
         // アシスタント数 × 比率を目安にする（最低1人）
@@ -883,7 +883,7 @@ export default function ShiftManager() {
     const dayLeader = day.dayLeader || null;
     const existingPairings = day.dayPairings || {};
     const trainerIdSet = new Set();
-    (day.sessions || []).forEach(s => { (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)); });
+    (day?.sessions || []).forEach(s => { (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)); });
     const activeTrainerIds = Array.from(trainerIdSet).filter(id => id !== dayLeader);
     if (activeTrainerIds.length === 0 || dayParticipants.length === 0) {
       alert('参加アシスタントとリーダー以外のトレーナーが必要です。');
@@ -913,7 +913,7 @@ export default function ShiftManager() {
     });
     setPracticeDays(prev => {
       const d = prev[dateStr];
-      const sessions = (d.sessions || []).map(session => {
+      const sessions = (d?.sessions || []).map(session => {
         const sessionTrainers = session.assigned?.trainers || [];
         const sessionAssistants = [];
         sessionTrainers.forEach(tid => {
@@ -939,7 +939,7 @@ export default function ShiftManager() {
         Object.entries(day.dayPairings).forEach(([tid, aids]) => {
           pairings[tid] = aids.filter(aid => aid !== assistantId);
         });
-        const sessions = (day.sessions || []).map(session => ({
+        const sessions = (day?.sessions || []).map(session => ({
           ...session,
           assigned: {
             trainers: session.assigned?.trainers || [],
@@ -974,7 +974,7 @@ export default function ShiftManager() {
       if (!currentInTrainer) {
         pairings[trainerId] = [...(pairings[trainerId] || []), assistantId];
       }
-      const sessions = (day.sessions || []).map(session => {
+      const sessions = (day?.sessions || []).map(session => {
         const sessionTrainers = session.assigned?.trainers || [];
         const sessionAssistants = [];
         sessionTrainers.forEach(tid => {
@@ -1009,11 +1009,11 @@ export default function ShiftManager() {
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
       if (y === year && m === month + 1) {
-        (day.sessions || []).forEach(s => {
+        (day?.sessions || []).forEach(s => {
           if (s.assigned?.trainers?.includes(t.id)) { count++; const cat = s.category || '未分類'; byCategory[cat] = (byCategory[cat] || 0) + 1; }
         });
       } else if (y === prevYear && m === prevMonth + 1) {
-        (day.sessions || []).forEach(s => {
+        (day?.sessions || []).forEach(s => {
           if (s.assigned?.trainers?.includes(t.id)) { prevCount++; const cat = s.category || '未分類'; prevByCategory[cat] = (prevByCategory[cat] || 0) + 1; }
         });
       }
@@ -1027,7 +1027,7 @@ export default function ShiftManager() {
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
       if (y !== year || m !== month + 1) return;
-      (day.sessions || []).forEach(s => {
+      (day?.sessions || []).forEach(s => {
         if (s.assigned?.assistants?.includes(a.id)) {
           count++;
           const cat = s.category || '未分類';
@@ -1864,7 +1864,7 @@ export default function ShiftManager() {
                         <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 1｜割り振り設定</div>
                         {isUnlocked && (() => {
                          const _ts = new Set();
-                         (day.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => _ts.add(id)));
+                         (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => _ts.add(id)));
                          const _at = Array.from(_ts).filter(id => id !== day.dayLeader);
                          const _pt = day.dayParticipants || [];
                          if (_at.length === 0 || _pt.length === 0) return null;
@@ -1948,8 +1948,9 @@ export default function ShiftManager() {
                   )}
                       {/* Step 2: リーダートレーナーの選択 */}
                       {(() => {
+                        if (!day) return null;
                         const trainerIdSet = new Set();
-                        (day.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)));
+                        (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)));
                         const dayTrainerIds = Array.from(trainerIdSet);
                         if (dayTrainerIds.length === 0) return null;
                         return (
@@ -2035,7 +2036,7 @@ export default function ShiftManager() {
 
                   {day && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {(day.sessions || []).map(session => (
+                    {(day?.sessions || []).map(session => (
                       <div key={session.id} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '12px', background: '#FCFBF8' }}>
                         {isUnlocked ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
@@ -2063,7 +2064,7 @@ export default function ShiftManager() {
                               style={{ fontSize: '12px', padding: '6px 6px', borderRadius: '6px', border: '1px solid #E2DCCC' }}>
                               {MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
-                            {(day.sessions || []).length > 1 && (
+                            {(day?.sessions || []).length > 1 && (
                               <button onClick={() => removeSession(ds, session.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', marginLeft: 'auto' }}>
                                 <Trash2 size={14} />
                               </button>
@@ -2163,7 +2164,7 @@ export default function ShiftManager() {
                   <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
                     {d.getMonth() + 1}月{d.getDate()}日（{DAY_LABELS[d.getDay()]}）
                   </div>
-                  {(day.sessions || []).map(session => (
+                  {(day?.sessions || []).map(session => (
                     <div key={session.id} style={{ marginBottom: '10px', paddingLeft: '8px' }}>
                       <div style={{ fontSize: '13px', fontWeight: 700, color: '#2B4A3A', marginBottom: '4px' }}>
                         {session.category}　{session.startTime}〜{session.endTime}

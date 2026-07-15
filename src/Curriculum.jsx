@@ -110,7 +110,7 @@ function parseCSV(text) {
 }
 
 // ─── メインコンポーネント ─────────────────────────────────────────
-export default function CurriculumApp({ embedded = false, embeddedCanEdit = true }) {
+export default function CurriculumApp({ embedded = false, embeddedCanEdit = true, embeddedCanViewAvg = false }) {
   // 認証
   const [authLevel, setAuthLevel] = useState(null);
   const [pwInput, setPwInput]     = useState('');
@@ -151,7 +151,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // 権限フラグ
   const canEdit       = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'schedule');
   const canManage     = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'admin');
-  const canViewAvg    = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin');
+  const canViewAvg    = embedded ? (embeddedCanViewAvg || embeddedCanEdit) : (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin');
   const isMaster      = embedded ? embeddedCanEdit : authLevel === 'master';
 
   // ── PW読み込み

@@ -1570,7 +1570,12 @@ export default function ShiftManager() {
 
       {tab === 'curriculum' && (
         <div style={{ margin: '0 -16px' }}>
-          <CurriculumApp embedded={true} embeddedCanEdit={false} embeddedCanViewAvg={isUnlocked} />
+          <CurriculumApp
+            embedded={true}
+            embeddedCanEdit={hasMasterAccess || isUnlocked}
+            embeddedCanViewAvg={isUnlocked}
+            embeddedIsMaster={hasMasterAccess}
+          />
         </div>
       )}
 

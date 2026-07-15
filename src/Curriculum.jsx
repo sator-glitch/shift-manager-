@@ -110,7 +110,7 @@ function parseCSV(text) {
 }
 
 // ─── メインコンポーネント ─────────────────────────────────────────
-export default function CurriculumApp({ embedded = false, embeddedCanEdit = true, embeddedCanViewAvg = false }) {
+export default function CurriculumApp({ embedded = false, embeddedCanEdit = true, embeddedCanViewAvg = false, embeddedIsMaster = false }) {
   // 認証
   const [authLevel, setAuthLevel] = useState(null);
   const [pwInput, setPwInput]     = useState('');
@@ -149,10 +149,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [csvError, setCsvError]         = useState('');
 
   // 権限フラグ
-  const canEdit    = authLevel === 'master' || authLevel === 'schedule';
-  const canManage  = authLevel === 'master' || authLevel === 'admin';
-  const canViewAvg = authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin' || embeddedCanViewAvg;
-  const isMaster   = authLevel === 'master';
+  const canEdit    = embedded ? embeddedCanEdit    : (authLevel === 'master' || authLevel === 'schedule');
+  const canManage  = embedded ? embeddedIsMaster   : (authLevel === 'master' || authLevel === 'admin');
+  const canViewAvg = embedded ? (embeddedCanViewAvg || embeddedCanEdit) : (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin');
+  const isMaster   = embedded ? embeddedIsMaster   : authLevel === 'master';
 
   // ── PW読み込み
   const CURR_AUTH_KEY = 'curriculum_auth_session';
@@ -359,8 +359,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // ─── ローディング
   if (loadingAuth || loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height: embedded ? '200px' : '100vh', color:'#9C9486', fontSize:'13px' }}>読み込み中…</div>;
 
-  // ─── ログイン画面
-  if (!authLevel) return (
+  // ─── ログイン画面（embeddedの場合はスキップ）
+  if (!authLevel && !embedded) return (
     <div style={{ background:'#FAF8F4', minHeight: embedded ? 'auto' : '100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px' }}>
       <div style={{ background:'#FFFFFF', borderRadius:'16px', padding:'28px 24px', width:'100%', maxWidth:'360px', border:'1px solid #EEE9DE' }}>
         <div style={{ fontSize: embedded ? '15px' : '22px', fontWeight:800, color:'#1F1C18', marginBottom:'4px' }}>カリキュラム管理</div>

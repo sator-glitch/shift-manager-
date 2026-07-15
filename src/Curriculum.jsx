@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, X, Upload, AlertCircle, CheckCircle, Users, BookOpen, BarChart2 } from 'lucide-react';
 
 // ─── Firebase キー ───────────────────────────────────────────────
-const DATA_KEY = 'curriculum_v1';
+const DATA_KEY = 'curriculum_v2'; // v2に変更してスタッフシードを強制適用
 const MASTER_PW_KEY = 'curriculum_master_pw_v1';
 const ADMIN_PW_KEY  = 'curriculum_admin_pw_v1';
 
@@ -602,6 +602,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                 ◎ 飛び級合格
               </span>
             </div>
+            {(data.curricula.length === 0 || displayedStaff.length === 0) ? (
               <div style={{ textAlign:'center', padding:'60px 0', color:'#B0A99A', fontSize:'13px' }}>
                 {data.curricula.length === 0 ? 'まずカリキュラムを追加してください' : 'スタッフがいません'}
               </div>

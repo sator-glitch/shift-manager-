@@ -728,7 +728,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const dayTypeMap = { ...(day.dayTypeMap || {}), [assistantId]: typeName };
+      const dayTypeMap = { ...(day?.dayTypeMap || {}), [assistantId]: typeName };
       return { ...prev, [dateStr]: { ...day, dayTypeMap } };
     });
   }
@@ -878,10 +878,10 @@ export default function ShiftManager() {
   function autoAssignAssistants(dateStr) {
     const day = practiceDays[dateStr];
     if (!day) return;
-    const dayTypeMap = day.dayTypeMap || {};
-    const dayParticipants = day.dayParticipants || [];
-    const dayLeader = day.dayLeader || null;
-    const existingPairings = day.dayPairings || {};
+    const dayTypeMap = day?.dayTypeMap || {};
+    const dayParticipants = day?.dayParticipants || [];
+    const dayLeader = day?.dayLeader || null;
+    const existingPairings = day?.dayPairings || {};
     const trainerIdSet = new Set();
     (day?.sessions || []).forEach(s => { (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)); });
     const activeTrainerIds = Array.from(trainerIdSet).filter(id => id !== dayLeader);
@@ -931,12 +931,12 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const current = day.dayParticipants || [];
+      const current = day?.dayParticipants || [];
       const isRemoving = current.includes(assistantId);
       const next = isRemoving ? current.filter(id => id !== assistantId) : [...current, assistantId];
-      if (isRemoving && day.dayPairings) {
+      if (isRemoving && day?.dayPairings) {
         const pairings = {};
-        Object.entries(day.dayPairings).forEach(([tid, aids]) => {
+        Object.entries(day?.dayPairings).forEach(([tid, aids]) => {
           pairings[tid] = aids.filter(aid => aid !== assistantId);
         });
         const sessions = (day?.sessions || []).map(session => ({
@@ -957,7 +957,7 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const current = day.dayLeader;
+      const current = day?.dayLeader;
       return { ...prev, [dateStr]: { ...day, dayLeader: current === trainerId ? null : trainerId } };
     });
   }
@@ -966,11 +966,11 @@ export default function ShiftManager() {
     setPracticeDays(prev => {
       const day = prev[dateStr];
       if (!day) return prev;
-      const pairings = { ...(day.dayPairings || {}) };
+      const pairings = { ...(day?.dayPairings || {}) };
       Object.keys(pairings).forEach(tid => {
         pairings[tid] = (pairings[tid] || []).filter(aid => aid !== assistantId);
       });
-      const currentInTrainer = (day.dayPairings?.[trainerId] || []).includes(assistantId);
+      const currentInTrainer = (day?.dayPairings?.[trainerId] || []).includes(assistantId);
       if (!currentInTrainer) {
         pairings[trainerId] = [...(pairings[trainerId] || []), assistantId];
       }
@@ -978,7 +978,7 @@ export default function ShiftManager() {
         const sessionTrainers = session.assigned?.trainers || [];
         const sessionAssistants = [];
         sessionTrainers.forEach(tid => {
-          if (tid === day.dayLeader) return;
+          if (tid === day?.dayLeader) return;
           (pairings[tid] || []).forEach(aid => {
             if (!sessionAssistants.includes(aid)) sessionAssistants.push(aid);
           });
@@ -1865,8 +1865,8 @@ export default function ShiftManager() {
                         {isUnlocked && (() => {
                          const _ts = new Set();
                          (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => _ts.add(id)));
-                         const _at = Array.from(_ts).filter(id => id !== day.dayLeader);
-                         const _pt = day.dayParticipants || [];
+                         const _at = Array.from(_ts).filter(id => id !== day?.dayLeader);
+                         const _pt = day?.dayParticipants || [];
                          if (_at.length === 0 || _pt.length === 0) return null;
                          return (
                            <div style={{ marginBottom: '12px' }}>
@@ -1874,7 +1874,7 @@ export default function ShiftManager() {
                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
                                {_at.map(tid => {
                                  const isSel = manualPairingTrainerId === tid;
-                                 const ac = (day.dayPairings?.[tid] || []).length;
+                                 const ac = (day?.dayPairings?.[tid] || []).length;
                                  return (
                                    <button key={tid} onClick={() => setManualPairingTrainerId(isSel ? null : tid)}
                                      style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '2px solid #4361EE' : '1px solid #E2DCCC', background: isSel ? '#EEF2FF' : '#FFFFFF', color: isSel ? '#4361EE' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
@@ -1889,9 +1889,9 @@ export default function ShiftManager() {
                                  <div style={{ fontSize: '11px', color: '#4361EE', fontWeight: 700, marginBottom: '8px' }}>{nameById(manualPairingTrainerId, 'trainer')} の担当アシスタントを選択</div>
                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                                    {_pt.map(aid => {
-                                     const _ia = (day.dayPairings?.[manualPairingTrainerId] || []).includes(aid);
-                                     const _at2 = (day.dayTypeMap || {})[aid];
-                                     const _ao = _at.some(tid => tid !== manualPairingTrainerId && (day.dayPairings?.[tid] || []).includes(aid));
+                                     const _ia = (day?.dayPairings?.[manualPairingTrainerId] || []).includes(aid);
+                                     const _at2 = (day?.dayTypeMap || {})[aid];
+                                     const _ao = _at.some(tid => tid !== manualPairingTrainerId && (day?.dayPairings?.[tid] || []).includes(aid));
                                      return (
                                        <button key={aid} onClick={() => toggleManualPairing(ds, manualPairingTrainerId, aid)}
                                          style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: _ia ? '1px solid #4361EE' : '1px solid #E2DCCC', background: _ia ? '#4361EE' : (_ao ? '#F5F5F5' : '#FFFFFF'), color: _ia ? '#FFFFFF' : (_ao ? '#B0A99A' : '#2B2823'), cursor: 'pointer', fontWeight: _ia ? 700 : 500 }}>
@@ -1911,14 +1911,14 @@ export default function ShiftManager() {
                            </div>
                          );
                         })()}
-                        {day.dayPairings && Object.keys(day.dayPairings).length > 0 && (
+                        {day?.dayPairings && Object.keys(day?.dayPairings).length > 0 && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            {Object.entries(day.dayPairings).map(([tid, aids]) => (
+                            {Object.entries(day?.dayPairings).map(([tid, aids]) => (
                               <div key={tid}>
                                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px' }}>{nameById(tid, 'trainer')}</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
                                   {aids.length > 0 ? aids.map(aid => {
-                                    const _r = (day.dayTypeMap || {})[aid];
+                                    const _r = (day?.dayTypeMap || {})[aid];
                                     const _c = _r ? assistantTypeColor(assistantTypes, _r) : null;
                                     return (
                                       <div key={aid} style={{ fontSize: '12px', color: '#2B2823', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1932,15 +1932,15 @@ export default function ShiftManager() {
                                 </div>
                               </div>
                             ))}
-                            {day.dayLeader && (
+                            {day?.dayLeader && (
                               <div>
-                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#B0746A', marginBottom: '4px' }}>{nameById(day.dayLeader, 'trainer')}</div>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#B0746A', marginBottom: '4px' }}>{nameById(day?.dayLeader, 'trainer')}</div>
                                 <div style={{ paddingLeft: '8px' }}><div style={{ fontSize: '12px', color: '#B0746A' }}>全体監督（リーダー）</div></div>
                               </div>
                             )}
                           </div>
                         )}
-                        {(!day.dayPairings || Object.keys(day.dayPairings).length === 0) && !isUnlocked && (
+                        {(!day?.dayPairings || Object.keys(day?.dayPairings).length === 0) && !isUnlocked && (
                           <div style={{ fontSize: '12px', color: '#B0A99A' }}>まだ割り振りが行われていません</div>
                         )}
                       </div>
@@ -1960,7 +1960,7 @@ export default function ShiftManager() {
                             </div>
                             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                               {dayTrainerIds.map(tid => {
-                                const isLeader = day.dayLeader === tid;
+                                const isLeader = day?.dayLeader === tid;
                                 const name = nameById(tid, 'trainer');
                                 return isUnlocked ? (
                                   <button key={tid} onClick={() => setDayLeader(ds, tid)}
@@ -1973,7 +1973,7 @@ export default function ShiftManager() {
                                   </span>
                                 ) : null;
                               })}
-                              {!isUnlocked && !day.dayLeader && <span style={{ fontSize: '12px', color: '#B0A99A' }}>未設定</span>}
+                              {!isUnlocked && !day?.dayLeader && <span style={{ fontSize: '12px', color: '#B0A99A' }}>未設定</span>}
                             </div>
                           </div>
                         );
@@ -1986,8 +1986,8 @@ export default function ShiftManager() {
                           <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 3｜参加アシスタントを選んでタイプを設定</div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {assistants.filter(a => !(a.offDates || []).includes(ds)).map(a => {
-                              const isParticipant = (day.dayParticipants || []).includes(a.id);
-                              const currentType = (day.dayTypeMap || {})[a.id] || null;
+                              const isParticipant = (day?.dayParticipants || []).includes(a.id);
+                              const currentType = (day?.dayTypeMap || {})[a.id] || null;
                               return (
                                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                   <button onClick={() => toggleDayParticipant(ds, a.id)}
@@ -2015,12 +2015,12 @@ export default function ShiftManager() {
                             {assistants.length === 0 && <span style={{ fontSize: '12px', color: '#B0A99A' }}>人員登録タブでアシスタントを追加してください</span>}
                           </div>
                         </div>
-                      ) : (day.dayParticipants && day.dayParticipants.length > 0) && (
+                      ) : (day?.dayParticipants && day?.dayParticipants.length > 0) && (
                         <div>
                           <div style={{ fontSize: '11px', fontWeight: 700, color: '#8A8378', marginBottom: '8px' }}>この日の参加アシスタント</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                            {(day.dayParticipants || []).map(aid => {
-                              const aType = (day.dayTypeMap || {})[aid];
+                            {(day?.dayParticipants || []).map(aid => {
+                              const aType = (day?.dayTypeMap || {})[aid];
                               const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
                               return (
                                 <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4', display: 'flex', alignItems: 'center', gap: '5px' }}>

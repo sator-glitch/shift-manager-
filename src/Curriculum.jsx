@@ -149,14 +149,22 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [csvError, setCsvError]         = useState('');
 
   // 権限フラグ
-  const canEdit       = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'schedule');
-  const canManage     = embedded ? embeddedCanEdit : (authLevel === 'master' || authLevel === 'admin');
-  const canViewAvg    = embedded ? (embeddedCanViewAvg || embeddedCanEdit) : (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin');
-  const isMaster      = embedded ? embeddedCanEdit : authLevel === 'master';
+  const canEdit    = authLevel === 'master' || authLevel === 'schedule';
+  const canManage  = authLevel === 'master' || authLevel === 'admin';
+  const canViewAvg = authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin' || embeddedCanViewAvg;
+  const isMaster   = authLevel === 'master';
 
   // ── PW読み込み
+  const CURR_AUTH_KEY = 'curriculum_auth_session';
+
   useEffect(() => {
-    if (embedded) { setAuthLevel('master'); setLoadingAuth(false); return; }
+    if (embedded) {
+      // セッション中のログイン状態を復元
+      const saved = sessionStorage.getItem(CURR_AUTH_KEY);
+      if (saved) setAuthLevel(saved);
+      setLoadingAuth(false);
+      return;
+    }
     (async () => {
       try { const r = await window.storage.get(MASTER_PW_KEY);   if (r) setMasterPw(r.value); } catch {}
       try { const r = await window.storage.get(SCHEDULE_PW_KEY); if (r) setSchedulePw(r.value); } catch {}
@@ -199,10 +207,22 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
 
   // ── 認証
   function login() {
-    if (pwInput === masterPw)   { setAuthLevel('master');   setPwError(''); }
-    else if (pwInput === schedulePw) { setAuthLevel('schedule'); setPwError(''); }
-    else if (pwInput === adminPw)    { setAuthLevel('admin');    setPwError(''); }
-    else { setPwError('パスワードが違います'); }
+    let level = null;
+    if (pwInput === masterPw)        level = 'master';
+    else if (pwInput === schedulePw) level = 'schedule';
+    else if (pwInput === adminPw)    level = 'admin';
+    if (level) {
+      setAuthLevel(level);
+      if (embedded) sessionStorage.setItem(CURR_AUTH_KEY, level);
+      setPwError('');
+    } else {
+      setPwError('パスワードが違います');
+    }
+  }
+
+  function logout() {
+    setAuthLevel(null);
+    if (embedded) sessionStorage.removeItem(CURR_AUTH_KEY);
   }
 
   // ── PW更新
@@ -337,21 +357,23 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
 
   // ─── ローディング
-  if (loadingAuth || loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', color:'#9C9486', fontSize:'13px' }}>読み込み中…</div>;
+  if (loadingAuth || loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height: embedded ? '200px' : '100vh', color:'#9C9486', fontSize:'13px' }}>読み込み中…</div>;
 
   // ─── ログイン画面
   if (!authLevel) return (
-    <div style={{ minHeight:'100vh', background:'#FAF8F4', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px' }}>
-      <div style={{ background:'#FFFFFF', borderRadius:'16px', padding:'32px 28px', width:'100%', maxWidth:'360px', border:'1px solid #EEE9DE' }}>
-        <div style={{ fontSize:'22px', fontWeight:800, color:'#1F1C18', marginBottom:'4px' }}>カリキュラム管理</div>
-        <div style={{ fontSize:'13px', color:'#9C9486', marginBottom:'24px' }}>NORA Group</div>
+    <div style={{ background:'#FAF8F4', minHeight: embedded ? 'auto' : '100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px' }}>
+      <div style={{ background:'#FFFFFF', borderRadius:'16px', padding:'28px 24px', width:'100%', maxWidth:'360px', border:'1px solid #EEE9DE' }}>
+        <div style={{ fontSize: embedded ? '15px' : '22px', fontWeight:800, color:'#1F1C18', marginBottom:'4px' }}>カリキュラム管理</div>
+        <div style={{ fontSize:'13px', color:'#9C9486', marginBottom:'16px' }}>
+          {embedded ? '総管理者・日程管理者・管理者でログインできます。' : 'NORA Group'}
+        </div>
         <div style={{ fontSize:'12px', color:'#8A8378', marginBottom:'6px', fontWeight:600 }}>パスワード</div>
         <input value={pwInput} onChange={e => setPwInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && login()}
           type="password" placeholder="パスワードを入力"
           style={{ width:'100%', padding:'11px 14px', borderRadius:'10px', border:'1px solid #E2DCCC', fontSize:'14px', boxSizing:'border-box', marginBottom:'8px' }} />
         {pwError && <div style={{ fontSize:'12px', color:'#E63946', marginBottom:'8px' }}>{pwError}</div>}
         <button onClick={login} style={{ width:'100%', padding:'12px', borderRadius:'10px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'14px', fontWeight:700, cursor:'pointer', marginBottom:'12px' }}>ログイン</button>
-        <button onClick={() => setAuthLevel('viewer')} style={{ width:'100%', padding:'12px', borderRadius:'10px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>閲覧のみで入る</button>
+        <button onClick={() => { setAuthLevel('viewer'); if (embedded) sessionStorage.setItem(CURR_AUTH_KEY, 'viewer'); }} style={{ width:'100%', padding:'12px', borderRadius:'10px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', fontWeight:600, cursor:'pointer' }}>閲覧のみで入る</button>
       </div>
     </div>
   );
@@ -371,7 +393,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             </div>
             <div style={{ display:'flex', gap:'6px' }}>
               {isMaster && <button onClick={() => setShowPwForm(v => !v)} style={{ fontSize:'11px', padding:'5px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', cursor:'pointer' }}>PW設定</button>}
-              <button onClick={() => setAuthLevel(null)} style={{ fontSize:'11px', padding:'5px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', cursor:'pointer' }}>ログアウト</button>
+              <button onClick={logout} style={{ fontSize:'11px', padding:'5px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', cursor:'pointer' }}>ログアウト</button>
             </div>
           </div>
           <div style={{ maxWidth:'900px', margin:'0 auto', display:'flex' }}>
@@ -410,18 +432,27 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       <div style={{ maxWidth:'900px', margin:'0 auto', padding:'20px 16px' }}>
         {/* 埋め込み時タブ */}
         {embedded && (
-          <div style={{ display:'flex', gap:'4px', background:'#EFEAE0', borderRadius:'10px', padding:'4px', marginBottom:'20px' }}>
-            {[
-              { key:'matrix', label:'合格マトリクス' },
-              { key:'compare', label:'学年比較' },
-              { key:'staff', label:'スタッフ' },
-              { key:'curriculum', label:'カリキュラム' },
-            ].map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)}
-                style={{ padding:'8px 14px', borderRadius:'8px', border:'none', background: tab===t.key ? '#FFFFFF' : 'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer', boxShadow: tab===t.key ? '0 1px 4px rgba(43,40,35,0.08)' : 'none' }}>
-                {t.label}
-              </button>
-            ))}
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+              <span style={{ fontSize:'11px', color:'#B0A99A', background:'#F3F1EC', padding:'3px 8px', borderRadius:'999px' }}>{authLabel || '閲覧'}</span>
+              <div style={{ display:'flex', gap:'6px' }}>
+                {isMaster && <button onClick={() => setShowPwForm(v => !v)} style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', cursor:'pointer' }}>PW設定</button>}
+                <button onClick={logout} style={{ fontSize:'11px', padding:'4px 10px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', cursor:'pointer' }}>ログアウト</button>
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:'4px', background:'#EFEAE0', borderRadius:'10px', padding:'4px' }}>
+              {[
+                { key:'matrix', label:'合格マトリクス' },
+                { key:'compare', label:'学年比較' },
+                { key:'staff', label:'スタッフ' },
+                { key:'curriculum', label:'カリキュラム' },
+              ].map(t => (
+                <button key={t.key} onClick={() => setTab(t.key)}
+                  style={{ padding:'8px 14px', borderRadius:'8px', border:'none', background: tab===t.key ? '#FFFFFF' : 'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer', boxShadow: tab===t.key ? '0 1px 4px rgba(43,40,35,0.08)' : 'none' }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen } from 'lucide-react';
+import CurriculumApp from './Curriculum.jsx';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -1569,10 +1570,11 @@ export default function ShiftManager() {
 
       {tab === 'curriculum' && (
         <div style={{ margin: '0 -16px' }}>
-          <iframe
-            src="/curriculum.html"
-            style={{ width: '100%', height: 'calc(100vh - 120px)', border: 'none' }}
-            title="カリキュラム管理"
+          <CurriculumApp
+            embedded={true}
+            embeddedCanEdit={hasMasterAccess}
+            embeddedCanViewAvg={isUnlocked}
+            embeddedIsMaster={hasMasterAccess}
           />
         </div>
       )}

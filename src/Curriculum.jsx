@@ -240,10 +240,22 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     setNewCurrName('');
   }
   function removeCurr(id) {
+    if (!window.confirm('このカリキュラムを削除しますか？全スタッフの合格記録も削除されます。')) return;
     update(d => {
       const records = {};
       Object.entries(d.records).forEach(([sid, rec]) => { const r = { ...rec }; delete r[id]; records[sid] = r; });
       return { ...d, curricula: d.curricula.filter(c => c.id !== id), records };
+    });
+  }
+  function moveCurr(id, dir) {
+    update(d => {
+      const arr = [...d.curricula];
+      const idx = arr.findIndex(c => c.id === id);
+      if (idx < 0) return d;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= arr.length) return d;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      return { ...d, curricula: arr };
     });
   }
 
@@ -677,12 +689,21 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
               {data.curricula.length === 0 && <div style={{ textAlign:'center', padding:'40px 0', color:'#B0A99A', fontSize:'13px' }}>カリキュラムがまだありません</div>}
               {data.curricula.map((c, i) => (
-                <div key={c.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-                    <span style={{ fontSize:'11px', color:'#B0A99A', fontWeight:700, minWidth:'20px' }}>{i+1}</span>
+                <div key={c.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px', flex:1 }}>
+                    <span style={{ fontSize:'11px', color:'#B0A99A', fontWeight:700, minWidth:'22px' }}>{i+1}</span>
                     <span style={{ fontSize:'13px', fontWeight:600, color:'#1F1C18' }}>{c.name}</span>
                   </div>
-                  {canManage && <button onClick={() => removeCurr(c.id)} style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px' }}><Trash2 size={14}/></button>}
+                  {canManage && (
+                    <div style={{ display:'flex', gap:'2px', alignItems:'center' }}>
+                      <button onClick={() => moveCurr(c.id, -1)} disabled={i === 0}
+                        style={{ fontSize:'13px', padding:'2px 7px', borderRadius:'6px', border:'1px solid #E2DCCC', background: i===0 ? '#F5F5F5' : '#FFFFFF', color: i===0 ? '#D0CCC4' : '#8A8378', cursor: i===0 ? 'default' : 'pointer' }}>↑</button>
+                      <button onClick={() => moveCurr(c.id, 1)} disabled={i === data.curricula.length-1}
+                        style={{ fontSize:'13px', padding:'2px 7px', borderRadius:'6px', border:'1px solid #E2DCCC', background: i===data.curricula.length-1 ? '#F5F5F5' : '#FFFFFF', color: i===data.curricula.length-1 ? '#D0CCC4' : '#8A8378', cursor: i===data.curricula.length-1 ? 'default' : 'pointer' }}>↓</button>
+                      <button onClick={() => removeCurr(c.id)}
+                        style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px', marginLeft:'4px' }}><Trash2 size={14}/></button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

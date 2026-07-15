@@ -1572,7 +1572,7 @@ export default function ShiftManager() {
         <div style={{ margin: '0 -16px' }}>
           <CurriculumApp
             embedded={true}
-            embeddedCanEdit={hasMasterAccess || isUnlocked}
+            embeddedCanEdit={hasMasterAccess}
             embeddedCanViewAvg={isUnlocked}
             embeddedIsMaster={hasMasterAccess}
           />

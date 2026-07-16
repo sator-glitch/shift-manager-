@@ -153,6 +153,7 @@ export default function ShiftManager() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [tab, setTab] = useState('shift');
+  const [showCurriculumStandalone, setShowCurriculumStandalone] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -1074,6 +1075,22 @@ export default function ShiftManager() {
         練習会シフト　{workspaces.find(w => w.id === activeWorkspaceId)?.name || ''}　{fmtMonthLabel(year, month)}
       </div>
 
+      {showCurriculumStandalone ? (
+        <div style={{ margin: '0 -16px' }}>
+          <div style={{ padding: '12px 16px 0' }}>
+            <button onClick={() => setShowCurriculumStandalone(false)} className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#9C9486', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <ChevronLeft size={12} /> 店舗選択に戻る
+            </button>
+          </div>
+          <CurriculumApp
+            embedded={true}
+            embeddedCanEdit={hasMasterAccess}
+            embeddedCanViewAvg={isUnlocked}
+            embeddedIsMaster={hasMasterAccess}
+          />
+        </div>
+      ) : (
+      <>
       {!activeWorkspaceId ? (
         <div style={{ maxWidth: '480px', margin: '40px auto' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
@@ -1177,6 +1194,12 @@ export default function ShiftManager() {
             )}
           </div>
           )}
+
+          <div style={{ marginTop: '16px' }}>
+            <button onClick={() => setShowCurriculumStandalone(true)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 18px', borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#1F1C18', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+              <BookOpen size={16} /> カリキュラム
+            </button>
+          </div>
 
           {hasMasterAccess && (
             <div style={{ marginTop: '24px', textAlign: 'center' }}>
@@ -2242,6 +2265,8 @@ export default function ShiftManager() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
       </>
       )}

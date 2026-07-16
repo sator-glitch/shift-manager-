@@ -337,8 +337,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   function parseCurrName(name) {
     const m1 = name.match(/^(.+?)(\d+)$/);
     if (m1) return { prefix: m1[1].trim(), num: parseInt(m1[2]), isGroupItem: true };
+    // パターン2: 末尾が（サブラベル）形式かつ、prefixが「人頭」で終わる項目のみグループ扱い
+    // 例: 「ブリーチ人頭（リタッチ1）」→ グループ化対象／「ブリーチウィッグ（リタッチ1）」→ 対象外（個別項目のまま）
     const m2 = name.match(/^(.+?)[（(].+[）)]$/);
-    if (m2) return { prefix: m2[1].trim(), num: null, isGroupItem: true };
+    if (m2 && m2[1].trim().endsWith('人頭')) return { prefix: m2[1].trim(), num: null, isGroupItem: true };
     return { prefix: name, num: null, isGroupItem: false };
   }
 

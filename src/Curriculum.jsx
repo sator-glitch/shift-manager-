@@ -9,9 +9,9 @@ const ADMIN_PW_KEY    = 'curriculum_admin_pw_v1';
 
 // ─── 権限レベル ──────────────────────────────────────────────────
 // master   : 全機能（総管理者）
-// schedule : 合格日編集+平均閲覧（日程管理者）
+// schedule : 合格マトリクス・スタッフ・カリキュラム編集+学年比較閲覧（カリキュラム管理者）
 // admin    : 合格日編集不可・平均閲覧可・スタッフ管理可（管理者）
-// viewer   : 合格日閲覧のみ・平均非表示
+// viewer   : 合格マトリクスのみ閲覧・平均非表示
 
 // ─── ユーティリティ ───────────────────────────────────────────────
 function daysSince(from, to) {
@@ -151,7 +151,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
 
   // 権限フラグ
   const canEdit    = (authLevel === 'master' || authLevel === 'schedule') || (embedded && embeddedCanEdit);
-  const canManage  = (authLevel === 'master' || authLevel === 'admin')   || (embedded && embeddedIsMaster);
+  const canManage  = (authLevel === 'master' || authLevel === 'admin' || authLevel === 'schedule') || (embedded && embeddedIsMaster);
   const canViewAvg = (authLevel === 'master' || authLevel === 'schedule' || authLevel === 'admin') || (embedded && (embeddedCanViewAvg || embeddedCanEdit));
   const isMaster   = authLevel === 'master' || (embedded && embeddedIsMaster && !authLevel);
 
@@ -369,7 +369,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       <div style={{ background:'#FFFFFF', borderRadius:'16px', padding:'28px 24px', width:'100%', maxWidth:'360px', border:'1px solid #EEE9DE' }}>
         <div style={{ fontSize: embedded ? '15px' : '22px', fontWeight:800, color:'#1F1C18', marginBottom:'4px' }}>カリキュラム管理</div>
         <div style={{ fontSize:'13px', color:'#9C9486', marginBottom:'16px' }}>
-          {embedded ? '総管理者・日程管理者・管理者でログインできます。' : 'NORA Group'}
+          {embedded ? '総管理者・カリキュラム管理者・管理者でログインできます。' : 'NORA Group'}
         </div>
         <div style={{ fontSize:'12px', color:'#8A8378', marginBottom:'6px', fontWeight:600 }}>パスワード</div>
         <input value={pwInput} onChange={e => setPwInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && login()}
@@ -382,7 +382,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     </div>
   );
 
-  const authLabel = { master:'総管理者', schedule:'日程管理者', admin:'管理者', viewer:'閲覧' }[authLevel] || '';
+  const authLabel = { master:'総管理者', schedule:'カリキュラム管理者', admin:'管理者', viewer:'閲覧' }[authLevel] || '';
 
   // ─── メイン画面
   return (
@@ -420,7 +420,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       {showPwForm && (
         <div style={{ background:'#FFFDF9', borderBottom:'1px solid #EEE9DE', padding:'14px 16px' }}>
           <div style={{ maxWidth:'900px', margin:'0 auto', display:'flex', gap:'12px', flexWrap:'wrap', alignItems:'flex-end' }}>
-            {[['総管理者PW', newMasterPw, setNewMasterPw], ['日程管理者PW', newSchedulePw, setNewSchedulePw], ['管理者PW', newAdminPw, setNewAdminPw]].map(([label, val, setter]) => (
+            {[['総管理者PW', newMasterPw, setNewMasterPw], ['カリキュラム管理者PW', newSchedulePw, setNewSchedulePw], ['管理者PW', newAdminPw, setNewAdminPw]].map(([label, val, setter]) => (
               <div key={label}>
                 <div style={{ fontSize:'11px', color:'#8A8378', marginBottom:'4px' }}>{label}（新）</div>
                 <input value={val} onChange={e => setter(e.target.value)} type="password" placeholder="空欄=変更なし"
@@ -463,12 +463,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
         {/* ── 合格マトリクス */}
         {tab === 'matrix' && (
           <div>
-            {/* 日程管理者ログインバー（管理者・閲覧者のみ表示） */}
+            {/* カリキュラム管理者ログインバー（管理者・閲覧者のみ表示） */}
             {!canEdit && (
               <div style={{ background:'#FFFDF9', border:'1px solid #EEE9DE', borderRadius:'10px', padding:'10px 14px', marginBottom:'14px', display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
                 {showScheduleLogin ? (
                   <>
-                    <span style={{ fontSize:'12px', color:'#8A8378' }}>日程管理者PW：</span>
+                    <span style={{ fontSize:'12px', color:'#8A8378' }}>カリキュラム管理者PW：</span>
                     <input type="password" value={schedulePwInput} onChange={e => setSchedulePwInput(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
@@ -492,10 +492,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   </>
                 ) : (
                   <>
-                    <span style={{ fontSize:'12px', color:'#9C9486' }}>合格日を編集するには日程管理者でログインしてください</span>
+                    <span style={{ fontSize:'12px', color:'#9C9486' }}>合格日を編集するにはカリキュラム管理者でログインしてください</span>
                     <button onClick={() => setShowScheduleLogin(true)}
                       style={{ padding:'6px 14px', borderRadius:'8px', border:'1px solid #4361EE', background:'#FFFFFF', color:'#4361EE', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
-                      日程管理者でログイン
+                      カリキュラム管理者でログイン
                     </button>
                   </>
                 )}

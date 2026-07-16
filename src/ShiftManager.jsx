@@ -1085,7 +1085,7 @@ export default function ShiftManager() {
           <CurriculumApp
             embedded={true}
             embeddedCanEdit={hasMasterAccess}
-            embeddedCanViewAvg={isUnlocked}
+            embeddedCanViewAvg={hasMasterAccess}
             embeddedIsMaster={hasMasterAccess}
           />
         </div>
@@ -1246,7 +1246,6 @@ export default function ShiftManager() {
             { key: 'people', label: '人員登録', icon: Users },
             { key: 'categories', label: '練習項目', icon: Tag },
             { key: 'offdays', label: '休み設定', icon: CalendarOff },
-            { key: 'curriculum', label: 'カリキュラム', icon: BookOpen },
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -1590,17 +1589,6 @@ export default function ShiftManager() {
           </div>
         );
       })()}
-
-      {tab === 'curriculum' && (
-        <div style={{ margin: '0 -16px' }}>
-          <CurriculumApp
-            embedded={true}
-            embeddedCanEdit={hasMasterAccess}
-            embeddedCanViewAvg={isUnlocked}
-            embeddedIsMaster={hasMasterAccess}
-          />
-        </div>
-      )}
 
       {tab === 'categories' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '480px' }}>

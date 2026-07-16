@@ -333,10 +333,13 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
 
   // 大項目グループ化：「中ロール人頭1」→ prefix「中ロール人頭」、suffix 1
+  // 「ブリーチ人頭（リタッチ1）」のような括弧形式も同様にグループ扱いする
   function parseCurrName(name) {
-    const m = name.match(/^(.+?)(\d+)$/);
-    if (m) return { prefix: m[1].trim(), num: parseInt(m[2]) };
-    return { prefix: name, num: null };
+    const m1 = name.match(/^(.+?)(\d+)$/);
+    if (m1) return { prefix: m1[1].trim(), num: parseInt(m1[2]), isGroupItem: true };
+    const m2 = name.match(/^(.+?)[（(].+[）)]$/);
+    if (m2) return { prefix: m2[1].trim(), num: null, isGroupItem: true };
+    return { prefix: name, num: null, isGroupItem: false };
   }
 
   // カリキュラムを大項目でグループ化
@@ -344,8 +347,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     const groups = {}; // prefix → [{ id, name, num }]
     const order = [];
     curricula.forEach(c => {
-      const { prefix, num } = parseCurrName(c.name);
-      if (num !== null) {
+      const { prefix, num, isGroupItem } = parseCurrName(c.name);
+      if (isGroupItem) {
         if (!groups[prefix]) { groups[prefix] = []; order.push({ type: 'group', prefix }); }
         groups[prefix].push({ ...c, num });
       } else {
@@ -583,16 +586,17 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             ) : (() => {
               const { groups, order } = buildCurrGroups(data.curricula);
 
-              // 大項目の合格日を計算：グループ内の最大番号の小項目の合格日
+              // 大項目の合格日を計算：グループ内の全小項目が埋まって（日付 or ◎）初めて判定し、
+              // 日付が入っている項目の中で最新のものを採用する（全項目◎の場合は◎扱い）
               function getGroupDate(staffId, prefix) {
                 const items = groups[prefix] || [];
-                const sorted = [...items].sort((a,b) => b.num - a.num);
-                for (const item of sorted) {
-                  const val = (data.records[staffId] || {})[item.id];
-                  if (val && val !== '◎') return val;
-                  if (val === '◎') return '◎';
-                }
-                return undefined;
+                const records = data.records[staffId] || {};
+                const vals = items.map(item => records[item.id]);
+                const allFilled = vals.length > 0 && vals.every(v => !!v);
+                if (!allFilled) return undefined;
+                const dateVals = vals.filter(v => v !== '◎');
+                if (dateVals.length === 0) return '◎';
+                return dateVals.sort().slice(-1)[0];
               }
 
               // 項目ごとのコホートデータを計算
@@ -619,7 +623,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   seenPrefixes.add(o.prefix);
                   const cohortData = getCohortData(o.prefix, true);
                   if (Object.keys(cohortData).length > 0) {
-                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix].sort((a,b) => a.num - b.num) });
+                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix] });
                   }
                 } else if (o.type === 'single') {
                   const cohortData = getCohortData(o.curr.id, false);
@@ -632,7 +636,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               return (
                 <>
                   <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
-                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。数字サフィックスのある項目（デンマン人頭1〜4など）は大項目として最終合格日で集計。
+                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
                     {items.map(item => {

@@ -31,7 +31,7 @@ const INIT_DATA = { curricula: [], staff: [], records: {} };
 const SEED_STAFF = [{"id": "3i1140i6", "name": "池崎", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "e676athv", "name": "池田", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "kdssnvdm", "name": "岡本", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "iutcqc7q", "name": "梶原", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "46ly3qtp", "name": "鎌田", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "vyrvmev7", "name": "喜友名", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "o62rnwuv", "name": "久我", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "spdmy4qa", "name": "田村", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "rsh090vr", "name": "長山", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "xkq69r38", "name": "中原", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "qwwly7h1", "name": "祝部", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "8itq4hxo", "name": "中島(2023／8入社)", "cohort": "2023年入社", "joinDate": "2023-04-01"}, {"id": "4ur09s6s", "name": "石橋梨花", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "l2u6drha", "name": "石原まつり", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "wde1zo1q", "name": "扇本武", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "1t57hnt0", "name": "児島萌泉", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "2f54ihbg", "name": "齋藤弓希斗", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "a0vv53p3", "name": "佐藤美心", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "ofl0bgwj", "name": "須佐美悠二", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "puqcsa1q", "name": "鈴木帆乃花", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "z9lbrls8", "name": "中尾もも", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "87w1xonx", "name": "中村龍志", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "47jgrt8z", "name": "森田琴心", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "d4n5nhez", "name": "塩盛要人", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "y5biyyz4", "name": "穐山音乃", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "g02rtjgx", "name": "浅井理子", "cohort": "2024年入社", "joinDate": "2024-04-01"}, {"id": "0l27oe02", "name": "友保芽依", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "vbbo8qsx", "name": "伊木栞乃", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "49ro4h0j", "name": "三枝千尋", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "ognyqjbv", "name": "竹村まゆか", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "gebzd5kr", "name": "北村美羽", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "zwtte8om", "name": "横尾梨花", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "71i7nyuv", "name": "久部菜々子", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "mlv55ggr", "name": "大沼蘭", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "bkyy06oa", "name": "野崎結芽", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "4evbhiyl", "name": "井上詩央", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "4xfm719a", "name": "生田結愛", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "84idhdvi", "name": "森下陽菜多", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "w8dqzqoz", "name": "木村那奈", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "wokdqu62", "name": "山本彩陽", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "tg8ofq0g", "name": "黒田恵", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "ncy4alhf", "name": "西平光大", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "fe5u8utd", "name": "鵜澤想来", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "qgs7o87g", "name": "津屋さくら", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "ms1z4cur", "name": "新倉あかね", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "wifnvb2c", "name": "德元芙友", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "whbxbjeb", "name": "椎木優斗", "cohort": "2025年入社", "joinDate": "2025-04-01"}, {"id": "grfd8p82", "name": "アキヤマ ダイゴ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "tjzbd1c9", "name": "アベ ユウセイ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "jzhghgts", "name": "イデ マリコ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "ll0eo6r1", "name": "イナミ コウヘイ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "37ogl8bb", "name": "ウエキ ソラ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "8h0jmlnh", "name": "ウラタ マモル", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "a7ca8cw4", "name": "オオバヤシ リリカ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "p557nu9n", "name": "オクノ アオイ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "s7z75ldk", "name": "カトウ クルミ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "rk5bw52l", "name": "カネヤマ ショウノスケ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "r2cpqqgl", "name": "カミジョウ ミウ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "k8bd4hxq", "name": "キムラ リョウスケ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "xevozjt2", "name": "ケミ ナギサ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "8i8lwxdm", "name": "サカイ カナタ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "x5hs2e7k", "name": "サワダ コハナ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "1qyci982", "name": "ススギ リノ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "lh77xn2v", "name": "スズキ ユイナ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "xiw4pv2n", "name": "スズキ アイネ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "x29j9mid", "name": "タカベ マナカ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "7exramxk", "name": "トウドウ リコ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "0nflj2hk", "name": "トヨオカ サキ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "fgcixgfi", "name": "ナカニシ ユナ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "f5sj7j56", "name": "モリ リュウキ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "fyv86w0z", "name": "ヤマダ ルナ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "ibqgva05", "name": "ヨネモト コトネ", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "u7m9qo8w", "name": "イシハラ ミコト", "cohort": "2026年入社", "joinDate": "2026-04-01"}, {"id": "gtloc8gl", "name": "カゴヤ ライム", "cohort": "2026年入社", "joinDate": "2026-04-01"}];
 
 // ─── 大枠カテゴリ ──────────────────────────────────
-const CURR_CATEGORIES = ['アシスタント基礎技術', 'カラー技術', 'ブロー技術', 'パーマ技術', 'カット技術'];
+const CURR_CATEGORIES = ['アシスタント基礎技術', 'カラー技術', 'ブロー技術', 'パーマ技術', 'カット技術', 'デビュー'];
 
 // ─── 年度カラー（2023年度起点） ──────────────────────────────────
 const NENDO_COLORS = [
@@ -146,6 +146,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [newStaffCohort, setNewStaffCohort] = useState('');
   const [newCurrName, setNewCurrName]   = useState('');
   const [newCurrCategory, setNewCurrCategory] = useState(CURR_CATEGORIES[0]);
+  const [draggedCurrId, setDraggedCurrId] = useState(null);
   const [showScheduleLogin, setShowScheduleLogin] = useState(false);
   const [schedulePwInput, setSchedulePwInput]     = useState('');
   const [schedulePwError, setSchedulePwError]     = useState('');
@@ -268,6 +269,24 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
   function setCurrCategory(id, category) {
     update(d => ({ ...d, curricula: d.curricula.map(c => c.id === id ? { ...c, category } : c) }));
+  }
+  function handleCurrDragStart(id) {
+    setDraggedCurrId(id);
+  }
+  function handleCurrDragOver(e, overId) {
+    e.preventDefault();
+    if (!draggedCurrId || draggedCurrId === overId) return;
+    const fromIdx = data.curricula.findIndex(c => c.id === draggedCurrId);
+    const toIdx = data.curricula.findIndex(c => c.id === overId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = [...data.curricula];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setData(prev => ({ ...prev, curricula: next }));
+  }
+  function handleCurrDragEnd() {
+    if (draggedCurrId) persist(data);
+    setDraggedCurrId(null);
   }
   function removeCurr(id) {
     if (!window.confirm('このカリキュラムを削除しますか？全スタッフの合格記録も削除されます。')) return;
@@ -850,8 +869,14 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
               {data.curricula.length === 0 && <div style={{ textAlign:'center', padding:'40px 0', color:'#B0A99A', fontSize:'13px' }}>カリキュラムがまだありません</div>}
               {data.curricula.map((c, i) => (
-                <div key={c.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE' }}>
+                <div key={c.id}
+                  draggable={canManage}
+                  onDragStart={() => canManage && handleCurrDragStart(c.id)}
+                  onDragOver={(e) => canManage && handleCurrDragOver(e, c.id)}
+                  onDragEnd={handleCurrDragEnd}
+                  style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE', opacity: draggedCurrId === c.id ? 0.5 : 1 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:'10px', flex:1 }}>
+                    {canManage && <span style={{ cursor:'grab', color:'#C9C2B2', fontSize:'14px', lineHeight:1 }} title="ドラッグして並び替え">⠿</span>}
                     <span style={{ fontSize:'11px', color:'#B0A99A', fontWeight:700, minWidth:'22px' }}>{i+1}</span>
                     <span style={{ fontSize:'13px', fontWeight:600, color:'#1F1C18' }}>{c.name}</span>
                     {canManage ? (

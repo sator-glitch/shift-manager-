@@ -160,6 +160,7 @@ export default function ShiftManager() {
   const [workspaces, setWorkspaces] = useState([]); // [{id, name, password}]
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(null);
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+  const [workspacesLoadError, setWorkspacesLoadError] = useState(false);
   const [editingWorkspaceName, setEditingWorkspaceName] = useState(false);
   const [workspaceNameInput, setWorkspaceNameInput] = useState('');
 
@@ -205,11 +206,22 @@ export default function ShiftManager() {
   // Load workspace list (and migrate legacy single-workspace data if present)
   useEffect(() => {
     async function loadWorkspaces() {
-      let list = [];
+      let list = null; // null = 読み込み失敗（未確定）／ [] = 確認済みで空
       try {
         const res = await window.storage.get(WORKSPACE_LIST_KEY);
-        if (res && res.value) list = JSON.parse(res.value);
-      } catch (e) { /* none yet */ }
+        list = (res && res.value) ? JSON.parse(res.value) : [];
+      } catch (e) {
+        if (e && e.message === 'not found') {
+          // Firebase側で「キーが存在しない」と明確に確認できた場合のみ「本当に初回」とみなす
+          list = [];
+        } else {
+          // ネットワークエラー・権限エラーなど、読み込み自体が失敗したケース。
+          // ここで空とみなして新規作成すると既存データを消してしまうため、絶対に自動生成しない。
+          setWorkspacesLoadError(true);
+          setWorkspacesLoaded(true);
+          return;
+        }
+      }
 
       if (list.length === 0) {
         // try migrating legacy v2 single-workspace data into Workspace A
@@ -344,11 +356,18 @@ export default function ShiftManager() {
         } catch (e) { data[w.id] = null; }
       }
 
-      let snapshots = [];
+      let snapshots = null; // null = 読み込み失敗（未確定）／ [] = 確認済みで空
       try {
         const snapRes = await window.storage.get(SNAPSHOT_KEY);
-        if (snapRes && snapRes.value) snapshots = JSON.parse(snapRes.value);
-      } catch (e) { /* none yet */ }
+        snapshots = snapRes && snapRes.value ? JSON.parse(snapRes.value) : [];
+      } catch (e) {
+        if (e && e.message === 'not found') {
+          snapshots = []; // 確認済み：本当に初回
+        } else {
+          // 読み込み自体が失敗。既存の履歴を破壊しないよう、今回のスナップショット取得を中止する。
+          return;
+        }
+      }
 
       const snapshotStr = JSON.stringify({ workspaces: wsList, data });
       const lastStr = snapshots.length > 0 ? JSON.stringify({ workspaces: snapshots[snapshots.length - 1].workspaces, data: snapshots[snapshots.length - 1].data }) : null;
@@ -675,6 +694,18 @@ export default function ShiftManager() {
       overrides[dateStr] = value;
     }
     const nextList = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, closedDateOverrides: overrides } : w);
+    await persistWorkspaceList(nextList);
+  }
+
+  async function setDayNote(dateStr, text) {
+    if (!activeWorkspace) return;
+    const notes = { ...(activeWorkspace.dayNotes || {}) };
+    if (!text || !text.trim()) {
+      delete notes[dateStr];
+    } else {
+      notes[dateStr] = text;
+    }
+    const nextList = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, dayNotes: notes } : w);
     await persistWorkspaceList(nextList);
   }
 
@@ -1038,6 +1069,18 @@ export default function ShiftManager() {
     });
     return { ...a, count, byCategory };
   });
+
+  if (workspacesLoadError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', gap: '16px', padding: '0 24px', textAlign: 'center' }}>
+        <div style={{ color: '#C23B3B', fontWeight: 700, fontSize: '15px' }}>店舗データの読み込みに失敗しました</div>
+        <div style={{ color: '#8A8378', fontSize: '13px' }}>ネットワークまたはFirebase側の一時的な問題の可能性があります。既存データを保護するため、ここでは何も変更していません。</div>
+        <button onClick={() => window.location.reload()} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+          再読み込みする
+        </button>
+      </div>
+    );
+  }
 
   if (!workspacesLoaded || (activeWorkspaceId && !loaded)) {
     return (
@@ -1860,6 +1903,22 @@ export default function ShiftManager() {
                       )}
                     </div>
                   </div>
+
+                  {(isUnlocked || activeWorkspace?.dayNotes?.[ds]) && (
+                    <div style={{ background: '#FFF8E1', border: '1px solid #F0D98C', borderRadius: '10px', padding: '12px 14px', marginBottom: '14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#8A6D00', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        📌 特記事項
+                      </div>
+                      {isUnlocked ? (
+                        <textarea key={ds} defaultValue={activeWorkspace?.dayNotes?.[ds] || ''}
+                          onBlur={e => setDayNote(ds, e.target.value)}
+                          placeholder="この日について申し送りたいことがあれば記入（例：〇〇さんは遅刻連絡あり、など）"
+                          style={{ width: '100%', minHeight: '48px', padding: '8px 10px', borderRadius: '6px', border: '1px solid #E9D9A0', background: '#FFFFFF', color: '#5C4A00', fontSize: '12px', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+                      ) : (
+                        <div style={{ fontSize: '12px', color: '#5C4A00', whiteSpace: 'pre-wrap' }}>{activeWorkspace?.dayNotes?.[ds]}</div>
+                      )}
+                    </div>
+                  )}
 
                   {!day && (
                     <div style={{ fontSize: '12px', color: '#B0A99A', padding: '16px 0', textAlign: 'center' }}>

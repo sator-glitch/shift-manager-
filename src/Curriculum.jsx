@@ -179,6 +179,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }, [embedded]);
 
   // ── データ読み込み
+  const [dataLoadError, setDataLoadError] = useState(false);
   useEffect(() => {
     (async () => {
       try {
@@ -195,7 +196,18 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
           await window.storage.set(DATA_KEY, JSON.stringify(init));
           setData(init);
         }
-      } catch { setData({ ...INIT_DATA, staff: SEED_STAFF }); }
+      } catch (e) {
+        if (e && e.message === 'not found') {
+          // Firebase側で「キーが存在しない」と明確に確認できた場合のみ初回とみなす
+          const init = { ...INIT_DATA, staff: SEED_STAFF };
+          try { await window.storage.set(DATA_KEY, JSON.stringify(init)); } catch {}
+          setData(init);
+        } else {
+          // 読み込み自体が失敗（ネットワーク・権限エラー等）。
+          // 空データを表示・保存すると既存データを消しかねないため、エラー状態にして編集不可にする。
+          setDataLoadError(true);
+        }
+      }
       setLoading(false);
     })();
   }, []);
@@ -389,6 +401,13 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
 
   // ─── ローディング
+  if (dataLoadError) return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height: embedded ? '200px' : '100vh', gap:'12px', padding:'0 20px', textAlign:'center' }}>
+      <div style={{ color:'#C23B3B', fontWeight:700, fontSize:'14px' }}>カリキュラムデータの読み込みに失敗しました</div>
+      <div style={{ color:'#8A8378', fontSize:'12px' }}>既存データを保護するため、空のデータは表示していません。編集はできません。</div>
+      <button onClick={() => window.location.reload()} style={{ padding:'8px 16px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>再読み込みする</button>
+    </div>
+  );
   if (loadingAuth || loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height: embedded ? '200px' : '100vh', color:'#9C9486', fontSize:'13px' }}>読み込み中…</div>;
 
   // ─── ログイン画面（embeddedの場合はスキップ）
@@ -593,6 +612,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                                       <input type="date" value={(!isSkip && val) ? val : ''}
                                         onChange={e => setRecord(s.id, c.id, e.target.value || undefined)}
                                         style={{ fontSize:'11px', padding:'3px 5px', borderRadius:'6px', border: (val && !isSkip) ? `1px solid ${nc?.text}` : '1px solid #E2DCCC', background: nc ? nc.bg : '#FFFFFF', color: nc ? nc.text : '#2B2823', width:'108px', fontWeight: val ? 700 : 400 }} />
+                                      {val && (
+                                        <button onClick={() => setRecord(s.id, c.id, undefined)} title="クリア（記録を消去）"
+                                          style={{ fontSize:'12px', padding:'3px 7px', borderRadius:'6px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#B0A99A', cursor:'pointer', fontWeight:700, lineHeight:1 }}>✕</button>
+                                      )}
                                       <button onClick={() => setRecord(s.id, c.id, isSkip ? undefined : '◎')} title="飛び級合格"
                                         style={{ fontSize:'12px', padding:'3px 7px', borderRadius:'6px', border: isSkip ? '1px solid #B8860B' : '1px solid #E2DCCC', background: isSkip ? '#FFD700' : '#FFFFFF', color: isSkip ? '#7B5800' : '#B0A99A', cursor:'pointer', fontWeight: isSkip ? 800 : 400 }}>◎</button>
                                     </div>

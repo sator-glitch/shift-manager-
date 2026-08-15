@@ -310,11 +310,11 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       ['STP/DP流し', 'ロングシャンプー'],
       ['マニキュア流し', 'ロングシャンプー'],
       ['ブリーチ流し', 'ロングシャンプー'],
-      ['スパ', 'ロングシャンプー'],
+      ['ヘッドスパ', 'ロングシャンプー'],
       ['液塗布ショート', 'ロングシャンプー'],
       ['液塗布ロング', '液塗布ショート'],
     ];
-    const wigChildren = ['ミディアム・ロング人頭', 'ボブ人頭', 'ショート人頭', 'メンズ人頭', 'デジパー人頭'];
+    const wigChildren = ['ミディアム、ロング', 'ボブ人頭', 'ショート人頭', 'メンズ人頭', 'デジパー人頭'];
 
     const found = [], notFound = [];
     const updates = {}; // id -> startBasisIds

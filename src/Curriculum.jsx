@@ -301,6 +301,15 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [setupReport, setSetupReport] = useState(null);
   function runStartBasisSetup() {
     const byName = name => data.curricula.find(c => c.name === name);
+    const { groups: allGroups } = buildCurrGroups(data.curricula);
+    // 名前から起算元の参照値を解決する。単品項目ならそのid、グループ名（例：ブリーチ人頭）なら "group:プレフィックス"
+    function resolveRef(name) {
+      const item = byName(name);
+      if (item) return { ref: item.id, ok: true };
+      if (allGroups[name]) return { ref: `group:${name}`, ok: true };
+      return { ref: null, ok: false };
+    }
+
     const joinItems = ['クロスチェンジ', '炭酸泉', 'スチーマー', 'ハンドドライショート', 'ハンドドライロング', 'ショートシャンプー', 'マッサージ', 'トリートメント'];
     const chains = [
       ['ロングシャンプー', 'ショートシャンプー'],
@@ -313,19 +322,29 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
       ['ヘッドスパ', 'ロングシャンプー'],
       ['液塗布ショート', 'ロングシャンプー'],
       ['液塗布ロング', '液塗布ショート'],
+      // パーマ：ストレート系はブリーチ人頭終了時から連鎖
+      ['ストレート塗布', 'ブリーチ人頭'],
+      ['ストレートアイロン', 'ストレート塗布'],
+      ['ストレート人頭', 'ストレートアイロン'],
+      // パーマ：ウィッグ系は癖毛人頭終了時から連鎖
+      ['パーパスウィッグ', '癖毛人頭'],
+      ['リーゼントウィッグ', 'パーパスウィッグ'],
+      ['スパイラルウィッグ', 'リーゼントウィッグ'],
+      ['ウィッグデザイン', 'スパイラルウィッグ'],
     ];
     const wigChildren = ['ミディアム、ロング人頭', 'ボブ人頭', 'ショート人頭', 'メンズ人頭', 'デジパー人頭'];
 
     const found = [], notFound = [];
-    const updates = {}; // id -> startBasisIds
+    const updates = {}; // id -> startBasisIds（単品項目のみ設定可能。id側は必ず単品項目）
 
     joinItems.forEach(name => {
       const item = byName(name);
       if (item) { updates[item.id] = ['__join__']; found.push(name); } else notFound.push(name);
     });
     chains.forEach(([name, prereqName]) => {
-      const item = byName(name), prereq = byName(prereqName);
-      if (item && prereq) { updates[item.id] = [prereq.id]; found.push(`${name}←${prereqName}`); }
+      const item = byName(name);
+      const prereq = resolveRef(prereqName);
+      if (item && prereq.ok) { updates[item.id] = [prereq.ref]; found.push(`${name}←${prereqName}`); }
       else notFound.push(`${name}←${prereqName}`);
     });
     const wigDesign = byName('ウィッグデザイン');
@@ -431,7 +450,20 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
 
   // ── 学年比較：日数計算の起点となるカテゴリ（先頭項目はカテゴリスタート日 or 入社日）
-  const CATEGORIES_WITH_START = ['カラー技術', 'ブロー技術', 'パーマ技術', 'カット技術'];
+  const CATEGORIES_WITH_START = ['カラー技術', 'ブロー技術', 'カット技術'];
+
+  // グループ（例：ブリーチ人頭）の合格日を算出。全小項目が埋まって初めて確定し、最新日付を採用
+  function getGroupPassDate(staffId, prefix) {
+    const { groups } = buildCurrGroups(data.curricula);
+    const items = groups[prefix] || [];
+    const records = data.records[staffId] || {};
+    const vals = items.map(item => records[item.id]);
+    const allFilled = vals.length > 0 && vals.every(v => !!v);
+    if (!allFilled) return undefined;
+    const dateVals = vals.filter(v => v !== '◎');
+    if (dateVals.length === 0) return '◎';
+    return dateVals.sort().slice(-1)[0];
+  }
 
   // 指定項目（単品のみ。グループは対象外）の起算日を求める
   function getItemStartDate(staff, item) {
@@ -442,7 +474,13 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     }
     if (basisIds.length > 0) {
       // 明示的な起算元（1つ＝単純依存／複数＝合流）。全部埋まって初めて確定し、最新日付を採用
-      const vals = basisIds.map(id => (data.records[staff.id] || {})[id]);
+      // "group:プレフィックス" 形式は、ブリーチ人頭のようなグループ項目の合格日を参照する
+      const vals = basisIds.map(ref => {
+        if (typeof ref === 'string' && ref.startsWith('group:')) {
+          return getGroupPassDate(staff.id, ref.slice('group:'.length));
+        }
+        return (data.records[staff.id] || {})[ref];
+      });
       const allFilled = vals.length > 0 && vals.every(v => !!v);
       if (!allFilled) return null;
       const dateVals = vals.filter(v => v !== '◎');

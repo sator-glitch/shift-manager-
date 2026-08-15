@@ -148,6 +148,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [newCurrName, setNewCurrName]   = useState('');
   const [newCurrCategory, setNewCurrCategory] = useState(CURR_CATEGORIES[0]);
   const [draggedCurrId, setDraggedCurrId] = useState(null);
+  const [openBasisEditorId, setOpenBasisEditorId] = useState(null);
   const [showScheduleLogin, setShowScheduleLogin] = useState(false);
   const [schedulePwInput, setSchedulePwInput]     = useState('');
   const [schedulePwError, setSchedulePwError]     = useState('');
@@ -283,6 +284,75 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   function setCurrCategory(id, category) {
     update(d => ({ ...d, curricula: d.curricula.map(c => c.id === id ? { ...c, category } : c) }));
   }
+  function setCurrStartBasis(id, basisIds) {
+    update(d => ({ ...d, curricula: d.curricula.map(c => c.id === id ? { ...c, startBasisIds: basisIds } : c) }));
+  }
+  function setCategoryStartDate(staffId, category, dateStr) {
+    update(d => {
+      const all = { ...(d.categoryStartDates || {}) };
+      const forStaff = { ...(all[staffId] || {}) };
+      if (dateStr) forStaff[category] = dateStr; else delete forStaff[category];
+      all[staffId] = forStaff;
+      return { ...d, categoryStartDates: all };
+    });
+  }
+
+  // 起算日の一括セットアップ（アシスタント基礎技術・パーマの依存関係を名前照合で設定）
+  const [setupReport, setSetupReport] = useState(null);
+  function runStartBasisSetup() {
+    const byName = name => data.curricula.find(c => c.name === name);
+    const joinItems = ['クロスチェンジ', '炭酸泉', 'スチーマー', 'ハンドドライショート', 'ハンドドライロング', 'ショートシャンプー', 'マッサージ', 'トリートメント'];
+    const chains = [
+      ['ロングシャンプー', 'ショートシャンプー'],
+      ['カラーシャンプー', 'ロングシャンプー'],
+      ['グレーシャンプー', 'ロングシャンプー'],
+      ['酸熱流し', 'ロングシャンプー'],
+      ['STP/DP流し', 'ロングシャンプー'],
+      ['マニキュア流し', 'ロングシャンプー'],
+      ['ブリーチ流し', 'ロングシャンプー'],
+      ['スパ', 'ロングシャンプー'],
+      ['液塗布ショート', 'ロングシャンプー'],
+      ['液塗布ロング', '液塗布ショート'],
+    ];
+    const wigChildren = ['ミディアム・ロング人頭', 'ボブ人頭', 'ショート人頭', 'メンズ人頭', 'デジパー人頭'];
+
+    const found = [], notFound = [];
+    const updates = {}; // id -> startBasisIds
+
+    joinItems.forEach(name => {
+      const item = byName(name);
+      if (item) { updates[item.id] = ['__join__']; found.push(name); } else notFound.push(name);
+    });
+    chains.forEach(([name, prereqName]) => {
+      const item = byName(name), prereq = byName(prereqName);
+      if (item && prereq) { updates[item.id] = [prereq.id]; found.push(`${name}←${prereqName}`); }
+      else notFound.push(`${name}←${prereqName}`);
+    });
+    const wigDesign = byName('ウィッグデザイン');
+    if (wigDesign) {
+      wigChildren.forEach(name => {
+        const item = byName(name);
+        if (item) { updates[item.id] = [wigDesign.id]; found.push(`${name}←ウィッグデザイン`); } else notFound.push(name);
+      });
+    } else {
+      notFound.push('ウィッグデザイン（見つからないため人頭系5項目も未設定）');
+    }
+    const freeStyle = byName('フリースタイル');
+    const wigChildIds = wigChildren.map(byName).filter(Boolean).map(i => i.id);
+    if (freeStyle && wigChildIds.length === wigChildren.length) {
+      updates[freeStyle.id] = wigChildIds;
+      found.push('フリースタイル←人頭5項目の合流');
+    } else if (freeStyle) {
+      notFound.push('フリースタイル（人頭5項目が揃っていないため未設定）');
+    } else {
+      notFound.push('フリースタイル');
+    }
+
+    if (Object.keys(updates).length > 0) {
+      update(d => ({ ...d, curricula: d.curricula.map(c => updates[c.id] ? { ...c, startBasisIds: updates[c.id] } : c) }));
+    }
+    setSetupReport({ found, notFound });
+  }
   function handleCurrDragStart(id) {
     setDraggedCurrId(id);
   }
@@ -360,10 +430,51 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     setCsvPreview(null); setCsvFileName('');
   }
 
-  // ── 学年比較：入社日から合格日までの日数（入社日がある場合はそれを基準）
-  function calcDays(staff, dateStr) {
+  // ── 学年比較：日数計算の起点となるカテゴリ（先頭項目はカテゴリスタート日 or 入社日）
+  const CATEGORIES_WITH_START = ['カラー技術', 'ブロー技術', 'パーマ技術', 'カット技術'];
+
+  // 指定項目（単品のみ。グループは対象外）の起算日を求める
+  function getItemStartDate(staff, item) {
+    const basisIds = item.startBasisIds || [];
+    if (basisIds.includes('__join__')) {
+      // 明示的に「入社日を起点」に固定（同カテゴリの1個前の項目には連鎖させない）
+      return staff.joinDate || null;
+    }
+    if (basisIds.length > 0) {
+      // 明示的な起算元（1つ＝単純依存／複数＝合流）。全部埋まって初めて確定し、最新日付を採用
+      const vals = basisIds.map(id => (data.records[staff.id] || {})[id]);
+      const allFilled = vals.length > 0 && vals.every(v => !!v);
+      if (!allFilled) return null;
+      const dateVals = vals.filter(v => v !== '◎');
+      if (dateVals.length === 0) return null; // 全項目◎で日付が無い→計算不能
+      return dateVals.sort().slice(-1)[0];
+    }
+    // 明示設定なし：同カテゴリ内の並び順で「1個前」の単品項目の合格日を起点にする
+    const sameCategorySingles = data.curricula.filter(c => c.category === item.category);
+    const idx = sameCategorySingles.findIndex(c => c.id === item.id);
+    if (idx > 0) {
+      const prevItem = sameCategorySingles[idx - 1];
+      const prevVal = (data.records[staff.id] || {})[prevItem.id];
+      if (!prevVal || prevVal === '◎') return null; // 前の項目が未合格、または飛び級で日付なし
+      return prevVal;
+    }
+    // カテゴリの最初の項目：カテゴリスタート日があればそれ、無ければ入社日
+    if (CATEGORIES_WITH_START.includes(item.category)) {
+      const cs = (data.categoryStartDates?.[staff.id] || {})[item.category];
+      if (cs) return cs;
+    }
+    return staff.joinDate || null;
+  }
+
+  // 学年比較：起算日から合格日までの日数。item未指定（グループ集計時）はカテゴリスタート日 or 入社日を使う
+  function calcDays(staff, dateStr, item) {
     if (!dateStr || dateStr === '◎') return null;
-    const base = staff.joinDate || null;
+    let base;
+    if (item) {
+      base = getItemStartDate(staff, item);
+    } else {
+      base = staff.joinDate || null;
+    }
     if (!base) return null;
     return daysSince(base, dateStr);
   }
@@ -581,6 +692,9 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   <thead style={{ position:'sticky', top:0, zIndex:3 }}>
                     <tr style={{ background:'#F3F1EC' }}>
                       <th style={{ padding:'10px 14px', textAlign:'left', fontSize:'12px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', position:'sticky', left:0, top:0, zIndex:4, background:'#F3F1EC', minWidth:'120px' }}>スタッフ</th>
+                      {selectedCategory !== 'all' && CATEGORIES_WITH_START.includes(selectedCategory) && (
+                        <th style={{ padding:'10px 12px', textAlign:'center', fontSize:'11px', fontWeight:700, color:'#8A6D00', borderBottom:'1px solid #EEE9DE', minWidth:'120px', whiteSpace:'nowrap', position:'sticky', top:0, background:'#FFF8E1', zIndex:3 }}>📅 {selectedCategory} スタート日</th>
+                      )}
                       {displayedCurricula.map(c => (
                         <th key={c.id} style={{ padding:'10px 12px', textAlign:'center', fontSize:'11px', fontWeight:700, color:'#2B2823', borderBottom:'1px solid #EEE9DE', minWidth:'110px', whiteSpace:'nowrap', position:'sticky', top:0, background:'#F3F1EC', zIndex:3 }}>{c.name}</th>
                       ))}
@@ -601,6 +715,17 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                               </div>
                             </div>
                           </td>
+                          {selectedCategory !== 'all' && CATEGORIES_WITH_START.includes(selectedCategory) && (
+                            <td style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center', background:'#FFFDF0' }}>
+                              {canEdit ? (
+                                <input type="date" value={(data.categoryStartDates?.[s.id] || {})[selectedCategory] || ''}
+                                  onChange={e => setCategoryStartDate(s.id, selectedCategory, e.target.value || undefined)}
+                                  style={{ fontSize:'11px', padding:'3px 5px', borderRadius:'6px', border:'1px solid #E9D9A0', background:'#FFFFFF', color:'#7B5800', width:'108px' }} />
+                              ) : (
+                                <span style={{ fontSize:'11px', color:'#7B5800' }}>{(data.categoryStartDates?.[s.id] || {})[selectedCategory] ? fmtDate((data.categoryStartDates[s.id])[selectedCategory]) : '―'}</span>
+                              )}
+                            </td>
+                          )}
                           {displayedCurricula.map(c => {
                             const val = rec[c.id];
                             const isSkip = val === '◎';
@@ -662,14 +787,14 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               }
 
               // 項目ごとのコホートデータを計算
-              function getCohortData(key, isGroup) {
+              function getCohortData(key, isGroup, itemObj) {
                 const result = {};
                 data.staff.forEach(s => {
                   if (!s.joinDate) return;
                   const val = isGroup
                     ? getGroupDate(s.id, key)
                     : (data.records[s.id] || {})[key];
-                  const days = calcDays(s, val);
+                  const days = calcDays(s, val, itemObj);
                   if (days === null) return;
                   if (!result[s.cohort]) result[s.cohort] = [];
                   result[s.cohort].push({ name: s.name, days });
@@ -683,12 +808,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               order.forEach(o => {
                 if (o.type === 'group' && !seenPrefixes.has(o.prefix)) {
                   seenPrefixes.add(o.prefix);
-                  const cohortData = getCohortData(o.prefix, true);
+                  const cohortData = getCohortData(o.prefix, true, null);
                   if (Object.keys(cohortData).length > 0) {
                     items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix], category: groups[o.prefix]?.[0]?.category });
                   }
                 } else if (o.type === 'single') {
-                  const cohortData = getCohortData(o.curr.id, false);
+                  const cohortData = getCohortData(o.curr.id, false, o.curr);
                   if (Object.keys(cohortData).length > 0) {
                     items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData, category: o.curr.category });
                   }
@@ -899,16 +1024,36 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                 </div>
               </div>
             )}
+            {canManage && (
+              <div style={{ background:'#F5F8FF', border:'1px solid #C7D2FE', borderRadius:'10px', padding:'12px 16px', marginBottom:'10px' }}>
+                <div style={{ fontSize:'12px', fontWeight:700, color:'#4361EE', marginBottom:'6px' }}>起算日の一括セットアップ</div>
+                <div style={{ fontSize:'11px', color:'#6B7BB8', marginBottom:'8px' }}>アシスタント基礎技術・パーマの依存関係を、項目名を照合して一括設定する。項目名が一致しないと反映されないので注意（実行後に結果を表示）。</div>
+                <button onClick={runStartBasisSetup} style={{ padding:'7px 14px', borderRadius:'7px', border:'none', background:'#4361EE', color:'#FFFFFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>実行する</button>
+                {setupReport && (
+                  <div style={{ marginTop:'10px', fontSize:'11px', lineHeight:1.7 }}>
+                    <div style={{ color:'#1A6B32', fontWeight:700 }}>✓ 設定できた（{setupReport.found.length}件）</div>
+                    <div style={{ color:'#4A6B5A' }}>{setupReport.found.join('　/　') || 'なし'}</div>
+                    {setupReport.notFound.length > 0 && (
+                      <>
+                        <div style={{ color:'#C23B3B', fontWeight:700, marginTop:'6px' }}>✕ 項目名が見つからなかった（{setupReport.notFound.length}件）</div>
+                        <div style={{ color:'#A85A5A' }}>{setupReport.notFound.join('　/　')}</div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
               {data.curricula.length === 0 && <div style={{ textAlign:'center', padding:'40px 0', color:'#B0A99A', fontSize:'13px' }}>カリキュラムがまだありません</div>}
               {data.curricula.map((c, i) => (
-                <div key={c.id}
+                <div key={c.id}>
+                <div
                   draggable={canManage}
                   onDragStart={() => canManage && handleCurrDragStart(c.id)}
                   onDragOver={(e) => canManage && handleCurrDragOver(e, c.id)}
                   onDragEnd={handleCurrDragEnd}
-                  style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#FFFFFF', borderRadius:'10px', border:'1px solid #EEE9DE', opacity: draggedCurrId === c.id ? 0.5 : 1 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'10px', flex:1 }}>
+                  style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 14px', background:'#FFFFFF', borderRadius: openBasisEditorId === c.id ? '10px 10px 0 0' : '10px', border:'1px solid #EEE9DE', opacity: draggedCurrId === c.id ? 0.5 : 1 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px', flex:1, flexWrap:'wrap' }}>
                     {canManage && <span style={{ cursor:'grab', color:'#C9C2B2', fontSize:'14px', lineHeight:1 }} title="ドラッグして並び替え">⠿</span>}
                     <span style={{ fontSize:'11px', color:'#B0A99A', fontWeight:700, minWidth:'22px' }}>{i+1}</span>
                     <span style={{ fontSize:'13px', fontWeight:600, color:'#1F1C18' }}>{c.name}</span>
@@ -921,6 +1066,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                     ) : (
                       c.category && <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'999px', background:'#F3F1EC', color:'#8A8378' }}>{c.category}</span>
                     )}
+                    {canManage && (
+                      <button onClick={() => setOpenBasisEditorId(prev => prev === c.id ? null : c.id)}
+                        style={{ fontSize:'11px', padding:'4px 8px', borderRadius:'6px', border: (c.startBasisIds?.length > 0) ? '1px solid #D8C97A' : '1px solid #E2DCCC', background: (c.startBasisIds?.length > 0) ? '#FFFDF0' : '#FFFFFF', color: (c.startBasisIds?.length > 0) ? '#7B5800' : '#9C9486', cursor:'pointer', fontWeight:600 }}>
+                        起算日：{c.startBasisIds?.length > 0 ? `${c.startBasisIds.length}項目指定` : 'デフォルト'}
+                      </button>
+                    )}
                   </div>
                   {canManage && (
                     <div style={{ display:'flex', gap:'2px', alignItems:'center' }}>
@@ -932,6 +1083,32 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                         style={{ background:'none', border:'none', cursor:'pointer', color:'#C2A98E', padding:'4px', marginLeft:'4px' }}><Trash2 size={14}/></button>
                     </div>
                   )}
+                </div>
+                {openBasisEditorId === c.id && canManage && (
+                  <div style={{ background:'#FFFDF0', border:'1px solid #E9D9A0', borderTop:'none', borderRadius:'0 0 10px 10px', padding:'12px 16px' }}>
+                    <div style={{ fontSize:'11px', color:'#8A6D00', marginBottom:'8px', lineHeight:1.6 }}>
+                      何も選ばない＝デフォルト（同カテゴリの1個前の項目の合格日。カテゴリ最初の項目はカテゴリスタート日 or 入社日）。<br/>
+                      1つ選ぶ＝その項目の合格日を起点にする。複数選ぶ＝選んだ項目が全部埋まってから、一番新しい日付を起点にする（分岐合流用）。
+                    </div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:'4px', maxHeight:'220px', overflowY:'auto' }}>
+                      {data.curricula.filter(other => other.id !== c.id).map(other => {
+                        const checked = (c.startBasisIds || []).includes(other.id);
+                        return (
+                          <label key={other.id} style={{ display:'flex', alignItems:'center', gap:'8px', fontSize:'12px', color:'#5C4A00', padding:'3px 0', cursor:'pointer' }}>
+                            <input type="checkbox" checked={checked}
+                              onChange={e => {
+                                const cur = c.startBasisIds || [];
+                                const next = e.target.checked ? [...cur, other.id] : cur.filter(id => id !== other.id);
+                                setCurrStartBasis(c.id, next);
+                              }} />
+                            {other.category && <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background:'#F3F1EC', color:'#8A8378' }}>{other.category}</span>}
+                            {other.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 </div>
               ))}
             </div>

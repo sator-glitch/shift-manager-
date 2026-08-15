@@ -131,6 +131,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // UI
   const [tab, setTab]                   = useState('matrix');
   const [selectedCohort, setSelectedCohort] = useState('all');
+  const [selectedCompareCategory, setSelectedCompareCategory] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [openCurrId, setOpenCurrId] = useState(null); // 学年比較で開いている項目（1つのみ）
   const [editingStaffId, setEditingStaffId] = useState(null);
@@ -684,23 +685,32 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   seenPrefixes.add(o.prefix);
                   const cohortData = getCohortData(o.prefix, true);
                   if (Object.keys(cohortData).length > 0) {
-                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix] });
+                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix], category: groups[o.prefix]?.[0]?.category });
                   }
                 } else if (o.type === 'single') {
                   const cohortData = getCohortData(o.curr.id, false);
                   if (Object.keys(cohortData).length > 0) {
-                    items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData });
+                    items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData, category: o.curr.category });
                   }
                 }
               });
+              const displayedItems = selectedCompareCategory === 'all' ? items : items.filter(it => it.category === selectedCompareCategory);
 
               return (
                 <>
                   <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
                     入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
                   </div>
+                  <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
+                    {['all', ...CURR_CATEGORIES].map(cat => (
+                      <button key={cat} onClick={() => setSelectedCompareCategory(cat)}
+                        style={{ fontSize:'12px', padding:'6px 14px', borderRadius:'8px', border: selectedCompareCategory===cat ? '1px solid #4361EE' : '1px solid #EEE9DE', background: selectedCompareCategory===cat ? '#4361EE' : '#FFFFFF', color: selectedCompareCategory===cat ? '#FFFFFF' : '#2B2823', cursor:'pointer', fontWeight:600 }}>
+                        {cat === 'all' ? '【全て】' : `【${cat}】`}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
-                    {items.map(item => {
+                    {displayedItems.map(item => {
                       const isOpen = openCurrId === item.key;
                       const allDays = Object.values(item.cohortData).flat().map(r => r.days);
                       const maxDays = Math.max(...allDays, 1);

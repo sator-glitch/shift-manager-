@@ -846,7 +846,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               order.forEach(o => {
                 if (o.type === 'group' && !seenPrefixes.has(o.prefix)) {
                   seenPrefixes.add(o.prefix);
-                  const cohortData = getCohortData(o.prefix, true, null);
+                  const groupFirstItem = groups[o.prefix]?.[0];
+                  const cohortData = getCohortData(o.prefix, true, groupFirstItem);
                   if (Object.keys(cohortData).length > 0) {
                     items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix], category: groups[o.prefix]?.[0]?.category });
                   }

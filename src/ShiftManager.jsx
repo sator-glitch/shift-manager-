@@ -439,6 +439,8 @@ export default function ShiftManager() {
   }
 
   async function restoreFromSnapshot(snapshot) {
+    // 上書きする前に、復元直前の状態を必ず1つ残しておく（誤操作からの巻き戻しを可能にするため）
+    await takeSnapshot();
     for (const w of snapshot.workspaces) {
       const wsData = snapshot.data[w.id];
       if (wsData) {
@@ -473,6 +475,8 @@ export default function ShiftManager() {
         alert('このファイルの形式が正しくありません。');
         return;
       }
+      // 上書きする前に、復元直前の状態を必ず1つ残しておく
+      await takeSnapshot();
       for (const w of parsed.workspaces) {
         const wsData = parsed.data[w.id];
         if (wsData) {
@@ -2330,7 +2334,7 @@ export default function ShiftManager() {
               {snapshotList.map((snap, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: '#FAF8F4', borderRadius: '8px' }}>
                   <span style={{ fontSize: '13px' }}>{new Date(snap.takenAt).toLocaleString('ja-JP')}</span>
-                  <button onClick={() => restoreFromSnapshot(snap)} style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
+                  <button onClick={() => { if (window.confirm(`${new Date(snap.takenAt).toLocaleString('ja-JP')}の状態に戻します。\n（戻す前の今の状態は自動的に1つ保存されます）\nよろしいですか？`)) restoreFromSnapshot(snap); }} style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontWeight: 600, cursor: 'pointer' }}>
                     この状態に戻す
                   </button>
                 </div>

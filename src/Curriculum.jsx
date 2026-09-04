@@ -134,6 +134,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const [selectedCompareCategory, setSelectedCompareCategory] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [openCurrId, setOpenCurrId] = useState(null); // 学年比較で開いている項目（1つのみ）
+  const [includeRetired, setIncludeRetired] = useState(true); // 学年比較に退社者を含めるか
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [editStaffName, setEditStaffName]   = useState('');
   const [editStaffDate, setEditStaffDate]   = useState('');
@@ -257,6 +258,11 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   const displayedStaff = selectedCohort === 'all' ? data.staff : data.staff.filter(s => s.cohort === selectedCohort);
   const displayedCurricula = selectedCategory === 'all' ? data.curricula : data.curricula.filter(c => c.category === selectedCategory);
 
+  // ── 在籍 / 退社の振り分け（合格記録は消さず、表示位置だけ分ける）
+  const activeStaff  = displayedStaff.filter(s => !s.retired);
+  const retiredStaff = displayedStaff.filter(s => s.retired);
+  const orderedStaff = [...activeStaff, ...retiredStaff];
+
   // ── スタッフ操作
   function addStaff() {
     if (!newStaffName.trim()) return;
@@ -265,8 +271,20 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
   function removeStaff(id) {
     const s = data.staff.find(s => s.id === id);
-    if (!window.confirm(`「${s?.name}」を削除しますか？\nこのスタッフの合格記録も全て削除されます。`)) return;
+    if (!window.confirm(`「${s?.name}」を削除しますか？\n\nこのスタッフの合格記録も全て削除され、学年比較の集計からも消えます。\n\n退社した人はこのボタンではなく「退社にする」を使ってください。データを残したまま一覧の下に移動できます。`)) return;
     update(d => { const records = { ...d.records }; delete records[id]; return { ...d, staff: d.staff.filter(s => s.id !== id), records }; });
+  }
+  // 退社にする：合格記録は一切消さず、staffにフラグを立てるだけ
+  function retireStaff(id) {
+    const s = data.staff.find(s => s.id === id);
+    if (!window.confirm(`「${s?.name}」を退社にしますか？\n\n合格記録はそのまま残り、一覧の「── 退社 ──」より下に移動します。いつでも在籍に戻せます。`)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    update(d => ({ ...d, staff: d.staff.map(x => x.id === id ? { ...x, retired: true, retiredAt: x.retiredAt || today } : x) }));
+    setEditingStaffId(null);
+  }
+  function unretireStaff(id) {
+    update(d => ({ ...d, staff: d.staff.map(x => x.id === id ? { ...x, retired: false } : x) }));
+    setEditingStaffId(null);
   }
   function startEditStaff(s) { setEditingStaffId(s.id); setEditStaffName(s.name); setEditStaffDate(s.joinDate || ''); setEditStaffCohort(s.cohort || ''); }
   function saveEditStaff() {
@@ -739,17 +757,38 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                     </tr>
                   </thead>
                   <tbody>
-                    {displayedStaff.map((s, si) => {
+                    {orderedStaff.map((s, si) => {
                       const rec = data.records[s.id] || {};
                       const color = cohortColor(cohorts, s.cohort);
+                      const isRetired = !!s.retired;
+                      // 退社の1人目の直前に「── 退社 ──」の区切り行を差し込む
+                      const isFirstRetired = isRetired && si === activeStaff.length;
+                      const rowBg = isRetired ? (si%2===0 ? '#F7F5F1' : '#F2F0EB') : (si%2===0 ? '#FFFFFF' : '#FAFAF8');
+                      const totalCols = 1 + (selectedCategory !== 'all' && CATEGORIES_WITH_START.includes(selectedCategory) ? 1 : 0) + displayedCurricula.length;
                       return (
-                        <tr key={s.id} style={{ background: si%2===0 ? '#FFFFFF' : '#FAFAF8' }}>
-                          <td style={{ padding:'10px 14px', borderBottom:'1px solid #F0EDE6', position:'sticky', left:0, background: si%2===0 ? '#FFFFFF' : '#FAFAF8', zIndex:1 }}>
+                        <React.Fragment key={s.id}>
+                        {isFirstRetired && (
+                          <tr>
+                            <td colSpan={totalCols} style={{ padding:'8px 14px', background:'#EFEDE7', borderTop:'2px solid #D8D3C6', borderBottom:'1px solid #E2DCCC' }}>
+                              <div style={{ position:'sticky', left:'14px', display:'inline-flex', alignItems:'baseline', gap:'10px', whiteSpace:'nowrap' }}>
+                                <span style={{ fontSize:'11px', fontWeight:800, color:'#8A8378', letterSpacing:'0.08em' }}>── 退社 ──</span>
+                                <span style={{ fontSize:'10px', color:'#B0A99A' }}>合格記録はそのまま残しています</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        <tr style={{ background: rowBg, opacity: isRetired ? 0.72 : 1 }}>
+                          <td style={{ padding:'10px 14px', borderBottom:'1px solid #F0EDE6', position:'sticky', left:0, background: rowBg, zIndex:1 }}>
                             <div style={{ display:'flex', alignItems:'center', gap:'7px' }}>
                               <span style={{ width:'8px', height:'8px', borderRadius:'50%', background:color, flexShrink:0 }} />
                               <div>
-                                <div style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{s.name}</div>
-                                <div style={{ fontSize:'10px', color:'#B0A99A' }}>{s.cohort}</div>
+                                <div style={{ fontSize:'13px', fontWeight:700, color: isRetired ? '#8A8378' : '#1F1C18', display:'flex', alignItems:'center', gap:'6px' }}>
+                                  {s.name}
+                                  {isRetired && <span style={{ fontSize:'9px', fontWeight:700, padding:'1px 6px', borderRadius:'999px', background:'#E5E1D8', color:'#7A7266' }}>退社</span>}
+                                </div>
+                                <div style={{ fontSize:'10px', color:'#B0A99A' }}>
+                                  {s.cohort}{isRetired && s.retiredAt ? ` ／ ${fmtDate(s.retiredAt)}退社` : ''}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -794,6 +833,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                             );
                           })}
                         </tr>
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -829,6 +869,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                 const result = {};
                 data.staff.forEach(s => {
                   if (!s.joinDate) return;
+                  if (!includeRetired && s.retired) return;
                   const val = isGroup
                     ? getGroupDate(s.id, key)
                     : (data.records[s.id] || {})[key];
@@ -873,6 +914,26 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                       </button>
                     ))}
                   </div>
+                  {data.staff.some(s => s.retired) && (
+                    <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px', padding:'9px 12px', borderRadius:'10px', background:'#F7F5F1', border:'1px solid #EEE9DE' }}>
+                      <span style={{ fontSize:'12px', color:'#8A8378' }}>
+                        退社した{data.staff.filter(s => s.retired).length}名の記録
+                      </span>
+                      <div style={{ display:'flex', gap:'6px' }}>
+                        <button onClick={() => setIncludeRetired(true)}
+                          style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'8px', border: includeRetired ? '1px solid #4361EE' : '1px solid #E2DCCC', background: includeRetired ? '#4361EE' : '#FFFFFF', color: includeRetired ? '#FFFFFF' : '#8A8378', cursor:'pointer', fontWeight:700 }}>
+                          含める
+                        </button>
+                        <button onClick={() => setIncludeRetired(false)}
+                          style={{ fontSize:'11px', padding:'5px 12px', borderRadius:'8px', border: !includeRetired ? '1px solid #4361EE' : '1px solid #E2DCCC', background: !includeRetired ? '#4361EE' : '#FFFFFF', color: !includeRetired ? '#FFFFFF' : '#8A8378', cursor:'pointer', fontWeight:700 }}>
+                          含めない
+                        </button>
+                      </div>
+                      <span style={{ fontSize:'10px', color:'#B0A99A' }}>
+                        {includeRetired ? '在籍者と退社者の両方で集計しています' : '在籍者だけで集計しています'}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
                     {displayedItems.map(item => {
                       const isOpen = openCurrId === item.key;
@@ -951,7 +1012,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
               {data.staff.length === 0 && <div style={{ textAlign:'center', padding:'40px 0', color:'#B0A99A', fontSize:'13px' }}>スタッフがまだいません</div>}
               {cohorts.map(cohort => {
-                const members = data.staff.filter(s => s.cohort === cohort);
+                const members = data.staff.filter(s => s.cohort === cohort && !s.retired);
+                if (members.length === 0) return null;
                 const color = cohortColor(cohorts, cohort);
                 return (
                   <div key={cohort}>
@@ -969,6 +1031,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                               <button onClick={saveEditStaff} style={{ flex:1, padding:'8px', borderRadius:'8px', border:'none', background:'#2B2823', color:'#FAF8F4', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>保存</button>
                               <button onClick={() => setEditingStaffId(null)} style={{ padding:'8px 14px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'13px', cursor:'pointer' }}>キャンセル</button>
                             </div>
+                            <button onClick={() => retireStaff(s.id)} style={{ padding:'8px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#F7F5F1', color:'#8A8378', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>退社にする（記録は残ります）</button>
                           </div>
                         ) : (
                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 14px' }}>
@@ -987,7 +1050,29 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   </div>
                 );
               })}
-              {data.staff.filter(s => !s.cohort || s.cohort === '未設定').map(s => (
+
+              {data.staff.some(s => s.retired) && (
+                <div style={{ marginTop:'14px' }}>
+                  <div style={{ fontSize:'11px', fontWeight:800, color:'#8A8378', letterSpacing:'0.08em', marginBottom:'6px', paddingTop:'12px', borderTop:'2px solid #E2DCCC' }}>
+                    ── 退社 ──　<span style={{ fontWeight:500, letterSpacing:'normal', color:'#B0A99A' }}>合格記録は残しています</span>
+                  </div>
+                  {data.staff.filter(s => s.retired).map(s => (
+                    <div key={s.id} style={{ background:'#F7F5F1', borderRadius:'10px', border:'1px solid #EEE9DE', marginBottom:'6px', padding:'12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px' }}>
+                      <div>
+                        <div style={{ fontSize:'13px', fontWeight:700, color:'#8A8378' }}>{s.name}</div>
+                        <div style={{ fontSize:'11px', color:'#B0A99A' }}>
+                          {s.cohort || '未設定'}　入社：{s.joinDate ? fmtDate(s.joinDate) : '未登録'}
+                          {s.retiredAt ? `　退社：${fmtDate(s.retiredAt)}` : ''}
+                        </div>
+                      </div>
+                      {canManage && (
+                        <button onClick={() => unretireStaff(s.id)} style={{ padding:'7px 12px', borderRadius:'8px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#8A8378', fontSize:'11px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>在籍に戻す</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {data.staff.filter(s => (!s.cohort || s.cohort === '未設定') && !s.retired).map(s => (
                 <div key={s.id} style={{ background:'#FFFFFF', borderRadius:'10px', border: editingStaffId===s.id ? '1px solid #4361EE' : '1px solid #EEE9DE', marginBottom:'6px', overflow:'hidden' }}>
                   {editingStaffId === s.id ? (
                     <div style={{ padding:'12px 14px', display:'flex', flexDirection:'column', gap:'8px' }}>

@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen } from 'lucide-react';
 import CurriculumApp from './Curriculum.jsx';
-import JudgmentPanel from './JudgmentPanel.jsx';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
 const SNAPSHOT_KEY = 'shift_manager_snapshots_v1';
 const MAX_SNAPSHOTS = 10;
 const MASTER_PASSWORD_KEY = 'shift_manager_master_password_v1';
-const CURRICULUM_KEY = 'curriculum_v2';            // Step 5 の項目選択に使う（読み取りのみ）
-const STAFF_LINK_KEY = 'shift_curriculum_link_v1'; // シフトのアシスタントID → カリキュラムのスタッフID
 
 const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -196,8 +193,6 @@ export default function ShiftManager() {
   const [practiceDays, setPracticeDays] = useState({}); // dateStr -> { sessions: [ {id, category, startTime, endTime, trainerAvail, assistantAvail, assigned} ] }
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('trainer');
-  const [curriculum, setCurriculum] = useState(null);
-  const [staffLink, setStaffLink] = useState({});
   const [newCategory, setNewCategory] = useState('');
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedOffPersonId, setSelectedOffPersonId] = useState(null);
@@ -329,24 +324,6 @@ export default function ShiftManager() {
     setWorkspaces(next);
     window.storage.set(WORKSPACE_LIST_KEY, JSON.stringify(next)).catch(e => console.error('訪問カウントの保存に失敗しました', e));
   }, [activeWorkspaceId]);
-
-  // Step 5 の項目選択用にカリキュラムと対応表を読む。こちらからは一切書き込まない
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get(CURRICULUM_KEY);
-        setCurriculum(typeof res.value === 'string' ? JSON.parse(res.value) : res.value);
-      } catch (e) {
-        console.error('カリキュラムの読み込みに失敗しました', e);
-      }
-      try {
-        const res = await window.storage.get(STAFF_LINK_KEY);
-        setStaffLink(typeof res.value === 'string' ? JSON.parse(res.value) : res.value);
-      } catch (e) {
-        // 対応表が無い場合は項目を手で選ぶ形になるだけなので、そのまま続行する
-      }
-    })();
-  }, []);
 
   const persist = useCallback(async (workspaceId, next) => {
     if (!workspaceId) return;
@@ -1018,27 +995,6 @@ export default function ShiftManager() {
       if (!day) return prev;
       const current = day?.dayLeader;
       return { ...prev, [dateStr]: { ...day, dayLeader: current === trainerId ? null : trainerId } };
-    });
-  }
-
-  // Step 5：判定の記録。practiceDays に入れるので既存の保存処理でそのまま永続化される
-  function setJudgment(dateStr, assistantId, patch) {
-    setPracticeDays(prev => {
-      const day = prev[dateStr];
-      if (!day) return prev;
-      const judgments = { ...(day.judgments || {}) };
-      if (patch.remove) {
-        delete judgments[assistantId];
-        return { ...prev, [dateStr]: { ...day, judgments } };
-      }
-      const next = { ...(judgments[assistantId] || {}), ...patch, at: new Date().toISOString() };
-      if (!('finalCall' in patch) && next.trainerCall && next.leaderCall) {
-        // 二人の判定が揃ったとき、一致していれば最終ジャッジを自動で埋める。
-        // 割れている場合は話し合いが要るので空にして、明示的に押してもらう
-        next.finalCall = next.trainerCall === next.leaderCall ? next.trainerCall : null;
-      }
-      judgments[assistantId] = next;
-      return { ...prev, [dateStr]: { ...day, judgments } };
     });
   }
 
@@ -2255,12 +2211,6 @@ export default function ShiftManager() {
                           <div style={{ fontSize: '12px', color: '#B0A99A' }}>まだ割り振りが行われていません</div>
                         )}
                       </div>
-
-                      {/* Step 5: 合否の判定。書き込みは店舗管理者ログイン時のみ */}
-                      {isUnlocked && (
-                        <JudgmentPanel dateStr={ds} day={day} curriculum={curriculum}
-                          staffLink={staffLink} nameById={nameById} onSet={setJudgment} />
-                      )}
                     </div>
                   )}
                 </div>

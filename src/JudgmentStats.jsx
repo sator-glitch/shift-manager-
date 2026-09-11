@@ -14,14 +14,16 @@ import React from 'react';
 export default function JudgmentStats({ practiceDays, nameById }) {
   const rows = {};
   Object.values(practiceDays || {}).forEach(day => {
-    Object.values((day && day.judgments) || {}).forEach(j => {
-      // ノーカウントはモデルの都合であって判断ではないので、一致率には数えない
-      if (!j || j.noCount || !j.trainerId || !j.trainerCall || !j.leaderCall) return;
+    Object.values((day && day.judgments) || {}).forEach(list => {
+      (Array.isArray(list) ? list : [list]).forEach(j => {
+      // ノーカウントとモデルキャンセルは、モデルの都合であって判断ではないので数えない
+      if (!j || j.status || !j.trainerId || !j.trainerCall || !j.leaderCall) return;
       const r = rows[j.trainerId] || (rows[j.trainerId] = { total: 0, agree: 0, lenient: 0, strict: 0 });
       r.total += 1;
       if (j.trainerCall === j.leaderCall) r.agree += 1;
       else if (j.trainerCall === 'pass') r.lenient += 1; // トレーナーが合格・リーダーが不合格
       else r.strict += 1;                                 // トレーナーが不合格・リーダーが合格
+      });
     });
   });
 

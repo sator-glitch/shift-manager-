@@ -1023,17 +1023,20 @@ export default function ShiftManager() {
   }
 
   // 判定の結果をカリキュラムの合格マトリクスへ反映する。
-  //   途中のカウント（デンマン人頭2など）  … 最終ジャッジが不合格でも日付を入れる
-  //   最終のカウント（デンマン人頭4など）  … 合格のときだけ日付を入れる
-  //   カウントでない項目                  … 合格のときだけ日付を入れる
+  //   途中のカウント（大ロール人頭2など）  … 最終ジャッジが不合格でも日付を入れる
+  //   最終のカウント／カウントでない項目    … 合格のときだけ日付を入れる
+  //   合格した場合、そのシリーズの残りには ◎（飛び級）を付ける。実際にやった日ではないので
+  //   日付を入れてはいけない（Curriculum.jsx は ◎ を日数計算から除外している）
+  //   ノーカウント／モデルキャンセル        … 何も書かない
   // 日付を消すのは「入っている日付がこの練習会の日と同じとき」だけにして、
   // カリキュラム画面で手入力された日付（補講など）を巻き込まないようにしている。
   const curriculumBackedUp = React.useRef(false);
-  async function applyJudgmentToCurriculum(dateStr, assistantId, judgment) {
+  async function applyJudgmentToCurriculum(dateStr, assistantId, entry) {
     const staffId = staffLink && staffLink[assistantId];
-    const currId = judgment && judgment.curriculumId;
+    const currId = entry && entry.curriculumId;
     if (!staffId || !currId) return;
-    if (!judgment.remove && !judgment.noCount && !judgment.finalCall) return; // 最終ジャッジが出るまで書かない
+    const skipped = entry.removed || entry.status === 'nocount' || entry.status === 'modelcancel';
+    if (!skipped && !entry.finalCall) return; // 最終ジャッジが出るまで書かない
     try {
       const res = await window.storage.get(CURRICULUM_KEY);
       const data = typeof res.value === 'string' ? JSON.parse(res.value) : res.value;
@@ -1052,8 +1055,6 @@ export default function ShiftManager() {
       }
 
       const info = countInfoOf(data.curricula, item);
-
-      // 連番項目なら、この回から最後までを対象にする（合格したら残りも埋める＝飛び級）
       const cur = splitCountName(item.name);
       const scope = (info && cur)
         ? data.curricula.filter(c => {
@@ -1063,24 +1064,21 @@ export default function ShiftManager() {
         : [item];
 
       const rec = { ...((data.records || {})[staffId] || {}) };
-      // この判定でこの日に書いたものかどうか。undo で他人の記入を巻き込まないための判断に使う
+      // この判定でこの日に書いたものかどうか。取り消し時に他人の記入を巻き込まないための判断
       const wasOurs = rec[item.id] === dateStr;
       const skipIds = scope.filter(c => c.id !== item.id).map(c => c.id);
 
-      // 実際に判定した項目には日付を入れる
       let dateFor = null;
-      if (!judgment.remove && !judgment.noCount) {
-        if (judgment.finalCall === 'pass') dateFor = dateStr;
-        else if (judgment.finalCall === 'fail' && info && !info.isFinal) dateFor = dateStr;
+      if (!skipped) {
+        if (entry.finalCall === 'pass') dateFor = dateStr;
+        else if (entry.finalCall === 'fail' && info && !info.isFinal) dateFor = dateStr;
       }
-      // 合格した場合、そのシリーズの残りは日付ではなく ◎（飛び級）を付ける
-      const markSkips = dateFor !== null && judgment.finalCall === 'pass' && skipIds.length > 0;
+      const markSkips = dateFor !== null && entry.finalCall === 'pass' && skipIds.length > 0;
 
       let changed = false;
       if (dateFor) {
         if (rec[item.id] !== dateFor) { rec[item.id] = dateFor; changed = true; }
       } else if (rec[item.id] === dateStr) {
-        // 消すのはこの練習会の日に自分で入れた分だけ。手入力された日付は触らない
         delete rec[item.id]; changed = true;
       }
       skipIds.forEach(id => {
@@ -1092,6 +1090,7 @@ export default function ShiftManager() {
         }
       });
       if (!changed) return;
+
       const next = { ...data, records: { ...(data.records || {}), [staffId]: rec } };
       await window.storage.set(CURRICULUM_KEY, JSON.stringify(next));
       setCurriculum(next);
@@ -1100,30 +1099,49 @@ export default function ShiftManager() {
     }
   }
 
-  // Step 5：判定の記録。practiceDays に入れるので既存の保存処理でそのまま永続化される
-  function setJudgment(dateStr, assistantId, patch) {
-    const day = practiceDays[dateStr];
-    if (!day) return;
-    const before = (day.judgments || {})[assistantId] || {};
-    let next;
-    if (patch.remove) {
-      next = { ...before, remove: true };
-    } else {
-      next = { ...before, ...patch, at: new Date().toISOString() };
-      if (!('finalCall' in patch) && next.trainerCall && next.leaderCall) {
-        // 二人の判定が揃ったとき、一致していれば最終ジャッジを自動で埋める。
-        // 割れている場合は話し合いが要るので空にして、明示的に押してもらう
-        next.finalCall = next.trainerCall === next.leaderCall ? next.trainerCall : null;
-      }
-    }
+  // Step 5：判定の記録。1日に2項目合格することがあるため、1人につき複数件持てる。
+  // practiceDays に入れるので既存の保存処理でそのまま永続化される
+  function updateJudgments(dateStr, assistantId, fn) {
     setPracticeDays(prev => {
       const d = prev[dateStr];
       if (!d) return prev;
       const judgments = { ...(d.judgments || {}) };
-      if (patch.remove) delete judgments[assistantId];
+      const next = fn(judgments[assistantId] || []);
+      if (next.length === 0) delete judgments[assistantId];
       else judgments[assistantId] = next;
       return { ...prev, [dateStr]: { ...d, judgments } };
     });
+  }
+
+  function addJudgment(dateStr, assistantId, trainerId, curriculumId) {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    updateJudgments(dateStr, assistantId, list => [...list, {
+      id, trainerId, curriculumId: curriculumId || '', at: new Date().toISOString(),
+    }]);
+  }
+
+  function removeJudgment(dateStr, assistantId, entryId) {
+    const list = ((practiceDays[dateStr] || {}).judgments || {})[assistantId] || [];
+    const target = list.find(e => e.id === entryId);
+    updateJudgments(dateStr, assistantId, l => l.filter(e => e.id !== entryId));
+    if (target) applyJudgmentToCurriculum(dateStr, assistantId, { ...target, removed: true });
+  }
+
+  function setJudgment(dateStr, assistantId, entryId, patch) {
+    const list = ((practiceDays[dateStr] || {}).judgments || {})[assistantId] || [];
+    const before = list.find(e => e.id === entryId);
+    if (!before) return;
+    const next = { ...before, ...patch, at: new Date().toISOString() };
+    if (!('finalCall' in patch) && next.trainerCall && next.leaderCall) {
+      // 二人の判定が揃ったとき、一致していれば最終ジャッジを自動で埋める。
+      // 割れている場合は話し合いが要るので空にして、明示的に押してもらう
+      next.finalCall = next.trainerCall === next.leaderCall ? next.trainerCall : null;
+    }
+    // 項目を変えたら、前の項目に書いた分を先に取り消す
+    if (patch.curriculumId && before.curriculumId && patch.curriculumId !== before.curriculumId) {
+      applyJudgmentToCurriculum(dateStr, assistantId, { ...before, removed: true });
+    }
+    updateJudgments(dateStr, assistantId, l => l.map(e => (e.id === entryId ? next : e)));
     applyJudgmentToCurriculum(dateStr, assistantId, next);
   }
 
@@ -2344,7 +2362,8 @@ export default function ShiftManager() {
                       {/* Step 5: 合否の判定。書き込みは店舗管理者ログイン時のみ */}
                       {isUnlocked && (
                         <JudgmentPanel dateStr={ds} day={day} curriculum={curriculum}
-                          staffLink={staffLink} nameById={nameById} onSet={setJudgment} />
+                          staffLink={staffLink} nameById={nameById}
+                          onSet={setJudgment} onAdd={addJudgment} onRemove={removeJudgment} />
                       )}
                     </div>
                   )}

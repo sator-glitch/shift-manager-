@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Plus } from 'lucide-react';
 
 // ===========================================================================
 // Step 5：合否の判定
@@ -12,12 +12,15 @@ import { X } from 'lucide-react';
 // 逆順だとトレーナーの判定がただの追認になり、データとして意味を持たなくなる。
 // リーダー側のボタンはトレーナーの判定が入るまで押せないようにしてある。
 //
-// 最終ジャッジを押した時点でカリキュラムの合格マトリクスに日付が入る。
+// 最終ジャッジを押した時点でカリキュラムの合格マトリクスに反映される。
 //   途中のカウント（大ロール人頭2など）… 不合格でも日付が入る（カウントは進む）
 //   最終のカウント／カウントでない項目 … 合格のときだけ日付が入る
-//   合格した場合、そのシリーズの残り（大ロール人頭1で合格なら2〜4）にも日付が入る＝飛び級
-//   ノーカウント（モデルの都合などで回数に数えない）… 何も書かない
+//   合格した場合、そのシリーズの残りには ◎（飛び級）が付く。実際にやった日ではないので
+//   日付は入れない（Curriculum.jsx は ◎ を日数計算から除外している）
+//   ノーカウント／モデルキャンセル … 何も書かない
 // 補講は勉強会以外の日に終わるので、従来どおりカリキュラム画面で日付を入れる。
+//
+// 1日に2項目合格することがあるため、1人につき複数の判定を持てる（判定は配列）。
 // ===========================================================================
 
 // 「デンマン人頭1」「ブリーチ人頭(リタッチ3)」のような連番項目を分解する
@@ -39,6 +42,25 @@ export function countInfoOf(curricula, item) {
   return { num: cur.num, max, isFinal: cur.num === max };
 }
 
+// 最終ジャッジのあとに、カリキュラムへ何を書いたかをそのまま出す
+function writeMessage(item, info, finalCall, dateStr) {
+  if (!item) return '';
+  if (finalCall === 'pass') {
+    if (info && info.num < info.max) {
+      const base = item.name.replace(/(\d+)(\)?)$/, '');
+      const rest = info.num + 1 === info.max
+        ? base + info.max
+        : base + (info.num + 1) + '〜' + base + info.max;
+      return 'カリキュラムの ' + item.name + ' に ' + dateStr + '、' + rest + ' に ◎（飛び級）を付けました';
+    }
+    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました';
+  }
+  if (info && !info.isFinal) {
+    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました（カウントのみ）';
+  }
+  return '不合格なので、カリキュラムには日付を入れていません';
+}
+
 function CallRow({ label, value, onPick, leader, strong, locked, lockMsg }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
@@ -56,9 +78,7 @@ function CallRow({ label, value, onPick, leader, strong, locked, lockMsg }) {
                 border: on ? '1px solid #2B2823' : '1px solid #E2DCCC',
                 background: on ? '#2B2823' : '#FFFFFF',
                 color: on ? '#FAF8F4' : '#2B2823',
-              }}>
-              {txt}
-            </button>
+              }}>{txt}</button>
           );
         })}
       </div>
@@ -67,8 +87,20 @@ function CallRow({ label, value, onPick, leader, strong, locked, lockMsg }) {
   );
 }
 
-export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nameById, onSet }) {
-  const [openFor, setOpenFor] = useState({}); // 「判定を記録する」を押した人だけ開く
+// 回数に数えない理由のボタン。どちらもカリキュラムには何も書かない
+function StatusButton({ label, active, title, onClick }) {
+  return (
+    <button type="button" title={title} onClick={onClick}
+      style={{ fontSize: '10px', fontWeight: 700, fontFamily: 'inherit', padding: '3px 10px',
+        borderRadius: '999px', cursor: 'pointer',
+        border: active ? '1px solid #A9742A' : '1px solid #E2DCCC',
+        background: active ? '#A9742A' : '#FFFFFF',
+        color: active ? '#FFFFFF' : '#8A8378' }}>{label}</button>
+  );
+}
+
+export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nameById, onSet, onAdd, onRemove }) {
+  const [openFor, setOpenFor] = useState({});
 
   const pairs = [];
   Object.entries((day && day.dayPairings) || {}).forEach(([tid, aids]) => {
@@ -76,34 +108,25 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
   });
 
   const title = <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '4px' }}>Step 5｜合否の判定</div>;
-
   if (pairs.length === 0) {
-    return (
-      <div>
-        {title}
-        <div style={{ fontSize: '12px', color: '#B0A99A' }}>Step 4で担当を割り振ると、ここに判定欄が出ます。</div>
-      </div>
-    );
+    return <div>{title}<div style={{ fontSize: '12px', color: '#B0A99A' }}>Step 4で担当を割り振ると、ここに判定欄が出ます。</div></div>;
   }
 
   const curricula = (curriculum && curriculum.curricula) || [];
   const records = (curriculum && curriculum.records) || {};
 
-  // その人がいま取り組んでいるはずの項目。
-  // 単に「最初の未合格項目」を返すと、前のほうに飛ばした項目が残っている人が
-  // ずっと手前に引き戻されてしまう（例：人頭まで進んでいるのにマニキュア流しが出る）。
-  // そのため「最後に合格した項目より後ろで、いちばん手前の未合格項目」を返す。
-  function nextItemIdFor(assistantId) {
+  // その人がいま取り組んでいるはずの項目。単に「最初の未合格項目」を返すと、前のほうに
+  // 飛ばした項目が残っている人がずっと手前に引き戻されるため、最後に合格した項目より
+  // 後ろで、いちばん手前の未合格項目を返す。excludeIds は同じ日に既に選んでいる項目。
+  function nextItemIdFor(assistantId, excludeIds) {
     const sid = staffLink && staffLink[assistantId];
     if (!sid) return '';
     const rec = records[sid] || {};
     let last = -1;
     curricula.forEach((c, i) => { if (rec[c.id]) last = i; });
-    const found = curricula.slice(last + 1).find(c => !rec[c.id]);
+    const found = curricula.slice(last + 1).find(c => !rec[c.id] && (excludeIds || []).indexOf(c.id) < 0);
     return found ? found.id : '';
   }
-
-  // 最後に合格した項目より手前で、まだ合格していない項目（飛ばしているもの）
   function skippedCountFor(assistantId) {
     const sid = staffLink && staffLink[assistantId];
     if (!sid) return 0;
@@ -137,142 +160,132 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {pairs.map(({ trainerId, assistantId }) => {
-          const j = ((day && day.judgments) || {})[assistantId] || {};
-          const isOpen = !!openFor[assistantId] || !!j.curriculumId || !!j.trainerCall;
+          const entries = ((day && day.judgments) || {})[assistantId] || [];
           const trainerName = nameById(trainerId, 'trainer');
           const assistantName = nameById(assistantId, 'assistant');
           const linked = !!(staffLink && staffLink[assistantId]);
 
-          if (!isOpen) {
+          if (entries.length === 0 && !openFor[assistantId]) {
             return (
-              <div key={assistantId} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '10px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <div key={assistantId} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '10px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '11px', color: '#8A8378' }}>{trainerName}</span>
                 <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
                 <span style={{ fontSize: '13px', fontWeight: 700 }}>{assistantName}</span>
-                <button
-                  onClick={() => {
-                    setOpenFor(prev => ({ ...prev, [assistantId]: true }));
-                    onSet(dateStr, assistantId, { trainerId, curriculumId: nextItemIdFor(assistantId) });
-                  }}
-                  style={{ marginLeft: 'auto', fontSize: '11px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', cursor: 'pointer', color: '#2B2823', fontWeight: 600 }}>
+                <button onClick={() => { setOpenFor(p => ({ ...p, [assistantId]: true })); onAdd(dateStr, assistantId, trainerId, nextItemIdFor(assistantId, [])); }}
+                  style={{ marginLeft: 'auto', fontSize: '11px', fontWeight: 600, padding: '5px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', cursor: 'pointer', color: '#2B2823' }}>
                   判定を記録する
                 </button>
               </div>
             );
           }
 
-          const item = curricula.find(c => c.id === j.curriculumId) || null;
-          const info = item ? countInfoOf(curricula, item) : null;
-          const agreed = j.trainerCall && j.leaderCall && j.trainerCall === j.leaderCall;
-          const split = j.trainerCall && j.leaderCall && j.trainerCall !== j.leaderCall;
+          const used = entries.map(e => e.curriculumId).filter(Boolean);
 
           return (
-            <div key={assistantId} style={{ border: '1px solid #E2DCCC', borderRadius: '10px', padding: '12px 13px', background: '#FFFFFF', display: 'flex', flexDirection: 'column', gap: '9px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '11px', color: '#8A8378' }}>{trainerName}</span>
-                <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
-                <span style={{ fontSize: '13px', fontWeight: 700 }}>{assistantName}</span>
-                {info && (
-                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
-                    background: info.isFinal ? '#F4EAE8' : '#F0F0EA', color: info.isFinal ? '#B0746A' : '#8A8378' }}>
-                    {info.isFinal ? '最終 ' + info.num + '/' + info.max : 'カウント ' + info.num + '/' + info.max}
-                  </span>
-                )}
-                <button type="button" onClick={() => onSet(dateStr, assistantId, { noCount: !j.noCount })}
-                  title="モデルの都合などで回数に数えない場合"
-                  style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', cursor: 'pointer',
-                    border: j.noCount ? '1px solid #A9742A' : '1px solid #E2DCCC',
-                    background: j.noCount ? '#A9742A' : '#FFFFFF',
-                    color: j.noCount ? '#FFFFFF' : '#8A8378' }}>
-                  ノーカウント
-                </button>
-                <button onClick={() => { setOpenFor(prev => ({ ...prev, [assistantId]: false })); onSet(dateStr, assistantId, { remove: true }); }}
-                  title="この判定を取り消す"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '2px' }}>
-                  <X size={14} />
-                </button>
-              </div>
+            <div key={assistantId} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {entries.map((j, idx) => {
+                const item = curricula.find(c => c.id === j.curriculumId) || null;
+                const info = item ? countInfoOf(curricula, item) : null;
+                const agreed = j.trainerCall && j.leaderCall && j.trainerCall === j.leaderCall;
+                const split = j.trainerCall && j.leaderCall && j.trainerCall !== j.leaderCall;
+                const skipped = j.status === 'nocount' || j.status === 'modelcancel';
 
-              <select value={j.curriculumId || ''} onChange={e => onSet(dateStr, assistantId, { curriculumId: e.target.value })}
-                style={{ width: '100%', fontSize: '12px', padding: '7px 9px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', color: '#2B2823', fontFamily: 'inherit' }}>
-                <option value="">項目を選ぶ</option>
-                {byCategory.map(g => (
-                  <optgroup key={g.cat} label={g.cat}>
-                    {g.items.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}{passedDateOf(assistantId, c.id) ? '　済' : ''}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              {!linked && (
-                <div style={{ fontSize: '10.5px', color: '#B0746A' }}>
-                  この人はカリキュラム側と紐付いていないため、次の項目を自動で選べません。項目は手で選んでください。
-                </div>
-              )}
-              {linked && skippedCountFor(assistantId) > 0 && (
-                <div style={{ fontSize: '10.5px', color: '#8A8378' }}>
-                  手前に未合格の項目が{skippedCountFor(assistantId)}件あります（飛ばして進んでいる分）
-                </div>
-              )}
-
-              {j.noCount ? (
-                <div style={{ fontSize: '11.5px', color: '#A9742A', fontWeight: 700 }}>
-                  ノーカウントです。回数に数えず、カリキュラムにも何も書きません。
-                </div>
-              ) : (<>
-              <CallRow label={trainerName + 'の判定'} value={j.trainerCall}
-                onPick={v => onSet(dateStr, assistantId, { trainerCall: v })} />
-              <CallRow label="リーダーの判定" value={j.leaderCall} leader
-                locked={!j.trainerCall} lockMsg="トレーナーの判定を先に"
-                onPick={v => onSet(dateStr, assistantId, { leaderCall: v })} />
-
-              {j.finalCall === 'fail' && info && !info.isFinal && (
-                <div style={{ fontSize: '10.5px', color: '#2B4A3A' }}>
-                  途中のカウントなので、不合格でもこの日付が {item.name} に入ります
-                </div>
-              )}
-              {(agreed || split) && (
-                <div style={{ borderTop: '1px dashed #E2DCCC', paddingTop: '9px' }}>
-                  <CallRow label="最終ジャッジ" value={j.finalCall} strong
-                    onPick={v => onSet(dateStr, assistantId, { finalCall: v })} />
-                  {agreed && (
-                    <div style={{ fontSize: '11px', color: '#2B4A3A', fontWeight: 700, marginTop: '4px' }}>二人の判定が一致しています</div>
-                  )}
-                  {split && !j.finalCall && (
-                    <div style={{ fontSize: '11px', color: '#A9742A', fontWeight: 700, marginTop: '4px' }}>
-                      判定が割れています。話し合った結果を最終ジャッジに入れてください。
+                return (
+                  <div key={j.id} style={{ border: '1px solid #E2DCCC', borderRadius: '10px', padding: '12px 13px', background: '#FFFFFF', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '11px', color: '#8A8378' }}>{trainerName}</span>
+                      <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
+                      <span style={{ fontSize: '13px', fontWeight: 700 }}>{assistantName}</span>
+                      {entries.length > 1 && <span style={{ fontSize: '10px', color: '#B0A99A' }}>{idx + 1}件目</span>}
+                      {info && (
+                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
+                          background: info.isFinal ? '#F4EAE8' : '#F0F0EA', color: info.isFinal ? '#B0746A' : '#8A8378' }}>
+                          {info.isFinal ? '最終 ' + info.num + '/' + info.max : 'カウント ' + info.num + '/' + info.max}
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <StatusButton label="ノーカウント" active={j.status === 'nocount'} title="回数に数えない場合"
+                          onClick={() => onSet(dateStr, assistantId, j.id, { status: j.status === 'nocount' ? null : 'nocount' })} />
+                        <StatusButton label="モデルキャンセル" active={j.status === 'modelcancel'} title="モデルが来なかった場合"
+                          onClick={() => onSet(dateStr, assistantId, j.id, { status: j.status === 'modelcancel' ? null : 'modelcancel' })} />
+                        <button onClick={() => { if (entries.length === 1) setOpenFor(p => ({ ...p, [assistantId]: false })); onRemove(dateStr, assistantId, j.id); }}
+                          title="この判定を取り消す"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '2px' }}>
+                          <X size={14} />
+                        </button>
+                      </span>
                     </div>
-                  )}
-                  {j.finalCall && (
-                    <div style={{ fontSize: '11px', color: '#8A8378', marginTop: '4px' }}>
-                      {writeMessage(item, info, j.finalCall, dateStr)}
-                    </div>
-                  )}
-                </div>
+
+                    <select value={j.curriculumId || ''} onChange={e => onSet(dateStr, assistantId, j.id, { curriculumId: e.target.value })}
+                      style={{ width: '100%', fontSize: '12px', padding: '7px 9px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', color: '#2B2823', fontFamily: 'inherit' }}>
+                      <option value="">項目を選ぶ</option>
+                      {byCategory.map(g => (
+                        <optgroup key={g.cat} label={g.cat}>
+                          {g.items.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}{passedDateOf(assistantId, c.id) ? '　済' : ''}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    {!linked && (
+                      <div style={{ fontSize: '10.5px', color: '#B0746A' }}>
+                        この人はカリキュラム側と紐付いていないため、次の項目を自動で選べません。項目は手で選んでください。
+                      </div>
+                    )}
+                    {linked && idx === 0 && skippedCountFor(assistantId) > 0 && (
+                      <div style={{ fontSize: '10.5px', color: '#8A8378' }}>
+                        手前に未合格の項目が{skippedCountFor(assistantId)}件あります（飛ばして進んでいる分）
+                      </div>
+                    )}
+
+                    {skipped ? (
+                      <div style={{ fontSize: '11.5px', color: '#A9742A', fontWeight: 700 }}>
+                        {j.status === 'nocount' ? 'ノーカウントです。' : 'モデルキャンセルです。'}
+                        回数に数えず、カリキュラムにも何も書きません。
+                      </div>
+                    ) : (<>
+                      {j.finalCall === 'fail' && info && !info.isFinal && (
+                        <div style={{ fontSize: '10.5px', color: '#2B4A3A' }}>
+                          途中のカウントなので、不合格でもこの日付が {item.name} に入ります
+                        </div>
+                      )}
+                      <CallRow label={trainerName + 'の判定'} value={j.trainerCall}
+                        onPick={v => onSet(dateStr, assistantId, j.id, { trainerCall: v })} />
+                      <CallRow label="リーダーの判定" value={j.leaderCall} leader
+                        locked={!j.trainerCall} lockMsg="トレーナーの判定を先に"
+                        onPick={v => onSet(dateStr, assistantId, j.id, { leaderCall: v })} />
+                      {(agreed || split) && (
+                        <div style={{ borderTop: '1px dashed #E2DCCC', paddingTop: '9px' }}>
+                          <CallRow label="最終ジャッジ" value={j.finalCall} strong
+                            onPick={v => onSet(dateStr, assistantId, j.id, { finalCall: v })} />
+                          {agreed && <div style={{ fontSize: '11px', color: '#2B4A3A', fontWeight: 700, marginTop: '4px' }}>二人の判定が一致しています</div>}
+                          {split && !j.finalCall && (
+                            <div style={{ fontSize: '11px', color: '#A9742A', fontWeight: 700, marginTop: '4px' }}>
+                              判定が割れています。話し合った結果を最終ジャッジに入れてください。
+                            </div>
+                          )}
+                          {j.finalCall && (
+                            <div style={{ fontSize: '11px', color: '#8A8378', marginTop: '4px' }}>
+                              {writeMessage(item, info, j.finalCall, dateStr)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>)}
+                  </div>
+                );
+              })}
+
+              {entries.length > 0 && (
+                <button onClick={() => onAdd(dateStr, assistantId, trainerId, nextItemIdFor(assistantId, used))}
+                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 600, padding: '4px 11px', borderRadius: '6px', border: '1px dashed #E2DCCC', background: 'transparent', cursor: 'pointer', color: '#8A8378' }}>
+                  <Plus size={11} /> {assistantName} に項目を追加
+                </button>
               )}
-              </>)}
             </div>
           );
         })}
       </div>
     </div>
   );
-}
-
-// 最終ジャッジのあとに、カリキュラムへ何を書いたかをそのまま出す
-function writeMessage(item, info, finalCall, dateStr) {
-  if (!item) return '';
-  if (finalCall === 'pass') {
-    if (info && info.num < info.max) {
-      // 残りのカウントは実際にやった日ではないので、日付ではなく ◎（飛び級）を付ける
-      const base = item.name.replace(/(\d+)(\)?)$/, '');
-      const rest = info.num + 1 === info.max ? base + info.max : base + (info.num + 1) + '〜' + base + info.max;
-      return 'カリキュラムの ' + item.name + ' に ' + dateStr + '、' + rest + ' に ◎（飛び級）を付けました';
-    }
-    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました';
-  }
-  if (info && !info.isFinal) {
-    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました（カウントのみ）';
-  }
-  return '不合格なので、カリキュラムには日付を入れていません';
 }

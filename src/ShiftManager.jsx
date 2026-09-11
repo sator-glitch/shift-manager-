@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen } from 'lucide-react';
 import CurriculumApp from './Curriculum.jsx';
-import JudgmentPanel, { countInfoOf, splitCountName } from './JudgmentPanel.jsx';
+import JudgmentPanel, { countInfoOf, splitCountName, asEntryList } from './JudgmentPanel.jsx';
 import JudgmentStats from './JudgmentStats.jsx';
+import JudgmentBoundary from './JudgmentBoundary.jsx';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -1106,7 +1107,7 @@ export default function ShiftManager() {
       const d = prev[dateStr];
       if (!d) return prev;
       const judgments = { ...(d.judgments || {}) };
-      const next = fn(judgments[assistantId] || []);
+      const next = fn(asEntryList(judgments[assistantId]));
       if (next.length === 0) delete judgments[assistantId];
       else judgments[assistantId] = next;
       return { ...prev, [dateStr]: { ...d, judgments } };
@@ -1121,14 +1122,14 @@ export default function ShiftManager() {
   }
 
   function removeJudgment(dateStr, assistantId, entryId) {
-    const list = ((practiceDays[dateStr] || {}).judgments || {})[assistantId] || [];
+    const list = asEntryList(((practiceDays[dateStr] || {}).judgments || {})[assistantId]);
     const target = list.find(e => e.id === entryId);
     updateJudgments(dateStr, assistantId, l => l.filter(e => e.id !== entryId));
     if (target) applyJudgmentToCurriculum(dateStr, assistantId, { ...target, removed: true });
   }
 
   function setJudgment(dateStr, assistantId, entryId, patch) {
-    const list = ((practiceDays[dateStr] || {}).judgments || {})[assistantId] || [];
+    const list = asEntryList(((practiceDays[dateStr] || {}).judgments || {})[assistantId]);
     const before = list.find(e => e.id === entryId);
     if (!before) return;
     const next = { ...before, ...patch, at: new Date().toISOString() };
@@ -2361,9 +2362,11 @@ export default function ShiftManager() {
 
                       {/* Step 5: 合否の判定。書き込みは店舗管理者ログイン時のみ */}
                       {isUnlocked && (
-                        <JudgmentPanel dateStr={ds} day={day} curriculum={curriculum}
-                          staffLink={staffLink} nameById={nameById}
-                          onSet={setJudgment} onAdd={addJudgment} onRemove={removeJudgment} />
+                        <JudgmentBoundary>
+                          <JudgmentPanel dateStr={ds} day={day} curriculum={curriculum}
+                            staffLink={staffLink} nameById={nameById}
+                            onSet={setJudgment} onAdd={addJudgment} onRemove={removeJudgment} />
+                        </JudgmentBoundary>
                       )}
                     </div>
                   )}
@@ -2471,7 +2474,9 @@ export default function ShiftManager() {
               </div>
 
               {hasMasterAccess && (
-                <JudgmentStats practiceDays={practiceDays} nameById={nameById} />
+                <JudgmentBoundary>
+                  <JudgmentStats practiceDays={practiceDays} nameById={nameById} />
+                </JudgmentBoundary>
               )}
             </div>
           )}

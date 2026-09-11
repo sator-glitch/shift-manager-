@@ -99,8 +99,17 @@ function StatusButton({ label, active, title, onClick }) {
   );
 }
 
+// 判定は配列で持つが、古い形（1人1件のオブジェクト）が残っていても落ちないようにする。
+// id が無い古いデータには、その場で仮のキーを与える。
+export function asEntryList(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map((e, i) => (e.id ? e : { ...e, id: 'legacy' + i }));
+  if (v && typeof v === 'object') return [{ ...v, id: v.id || 'legacy0' }];
+  return [];
+}
+
 export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nameById, onSet, onAdd, onRemove }) {
   const [openFor, setOpenFor] = useState({});
+  const label = (id, type) => (typeof nameById === 'function' ? (nameById(id, type) || '（名前なし）') : id);
 
   const pairs = [];
   Object.entries((day && day.dayPairings) || {}).forEach(([tid, aids]) => {
@@ -112,7 +121,7 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
     return <div>{title}<div style={{ fontSize: '12px', color: '#B0A99A' }}>Step 4で担当を割り振ると、ここに判定欄が出ます。</div></div>;
   }
 
-  const curricula = (curriculum && curriculum.curricula) || [];
+  const curricula = Array.isArray(curriculum && curriculum.curricula) ? curriculum.curricula : [];
   const records = (curriculum && curriculum.records) || {};
 
   // その人がいま取り組んでいるはずの項目。単に「最初の未合格項目」を返すと、前のほうに
@@ -160,9 +169,9 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {pairs.map(({ trainerId, assistantId }) => {
-          const entries = ((day && day.judgments) || {})[assistantId] || [];
-          const trainerName = nameById(trainerId, 'trainer');
-          const assistantName = nameById(assistantId, 'assistant');
+          const entries = asEntryList(((day && day.judgments) || {})[assistantId]);
+          const trainerName = label(trainerId, 'trainer');
+          const assistantName = label(assistantId, 'assistant');
           const linked = !!(staffLink && staffLink[assistantId]);
 
           if (entries.length === 0 && !openFor[assistantId]) {
@@ -246,7 +255,7 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                     ) : (<>
                       {j.finalCall === 'fail' && info && !info.isFinal && (
                         <div style={{ fontSize: '10.5px', color: '#2B4A3A' }}>
-                          途中のカウントなので、不合格でもこの日付が {item.name} に入ります
+                          途中のカウントなので、不合格でもこの日付が {item ? item.name : 'この項目'} に入ります
                         </div>
                       )}
                       <CallRow label={trainerName + 'の判定'} value={j.trainerCall}

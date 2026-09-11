@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen } from 'lucide-react';
 import CurriculumApp from './Curriculum.jsx';
-import JudgmentPanel from './JudgmentPanel.jsx';
+import JudgmentPanel, { countInfoOf, splitCountName } from './JudgmentPanel.jsx';
+import JudgmentStats from './JudgmentStats.jsx';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
 const workspaceDataKey = (id) => `shift_manager_workspace_${id}`;
@@ -1021,25 +1022,100 @@ export default function ShiftManager() {
     });
   }
 
+  // 判定の結果をカリキュラムの合格マトリクスへ反映する。
+  //   途中のカウント（デンマン人頭2など）  … 最終ジャッジが不合格でも日付を入れる
+  //   最終のカウント（デンマン人頭4など）  … 合格のときだけ日付を入れる
+  //   カウントでない項目                  … 合格のときだけ日付を入れる
+  // 日付を消すのは「入っている日付がこの練習会の日と同じとき」だけにして、
+  // カリキュラム画面で手入力された日付（補講など）を巻き込まないようにしている。
+  const curriculumBackedUp = React.useRef(false);
+  async function applyJudgmentToCurriculum(dateStr, assistantId, judgment) {
+    const staffId = staffLink && staffLink[assistantId];
+    const currId = judgment && judgment.curriculumId;
+    if (!staffId || !currId) return;
+    if (!judgment.remove && !judgment.noCount && !judgment.finalCall) return; // 最終ジャッジが出るまで書かない
+    try {
+      const res = await window.storage.get(CURRICULUM_KEY);
+      const data = typeof res.value === 'string' ? JSON.parse(res.value) : res.value;
+      const item = (data.curricula || []).find(c => c.id === currId);
+      if (!item) return;
+
+      // 最初の書き込み前に、その日のカリキュラムを丸ごと1本退避しておく
+      if (!curriculumBackedUp.current) {
+        curriculumBackedUp.current = true;
+        const stamp = dateStr.replace(/-/g, '');
+        try {
+          await window.storage.get(CURRICULUM_KEY + '_backup_judgment_' + stamp);
+        } catch (e) {
+          await window.storage.set(CURRICULUM_KEY + '_backup_judgment_' + stamp, JSON.stringify(data));
+        }
+      }
+
+      const info = countInfoOf(data.curricula, item);
+
+      // 連番項目なら、この回から最後までを対象にする（合格したら残りも埋める＝飛び級）
+      const cur = splitCountName(item.name);
+      const scope = (info && cur)
+        ? data.curricula.filter(c => {
+            const o = splitCountName(c.name);
+            return o && o.base === cur.base && o.num >= info.num;
+          })
+        : [item];
+
+      // この練習会の日付を入れるべき項目
+      let desired = [];
+      if (!judgment.remove && !judgment.noCount) {
+        if (judgment.finalCall === 'pass') {
+          desired = scope.map(c => c.id);              // 合格なら残りのカウントも埋める
+        } else if (judgment.finalCall === 'fail' && info && !info.isFinal) {
+          desired = [item.id];                         // 途中のカウントは不合格でも1回分進む
+        }
+      }
+
+      const rec = { ...((data.records || {})[staffId] || {}) };
+      let changed = false;
+      scope.forEach(c => {
+        if (desired.indexOf(c.id) >= 0) {
+          if (rec[c.id] !== dateStr) { rec[c.id] = dateStr; changed = true; }
+        } else if (rec[c.id] === dateStr) {
+          // 消すのはこの練習会の日に自分で入れた分だけ。手入力された日付は触らない
+          delete rec[c.id]; changed = true;
+        }
+      });
+      if (!changed) return;
+      const next = { ...data, records: { ...(data.records || {}), [staffId]: rec } };
+      await window.storage.set(CURRICULUM_KEY, JSON.stringify(next));
+      setCurriculum(next);
+    } catch (e) {
+      console.error('カリキュラムへの反映に失敗しました', e);
+    }
+  }
+
   // Step 5：判定の記録。practiceDays に入れるので既存の保存処理でそのまま永続化される
   function setJudgment(dateStr, assistantId, patch) {
-    setPracticeDays(prev => {
-      const day = prev[dateStr];
-      if (!day) return prev;
-      const judgments = { ...(day.judgments || {}) };
-      if (patch.remove) {
-        delete judgments[assistantId];
-        return { ...prev, [dateStr]: { ...day, judgments } };
-      }
-      const next = { ...(judgments[assistantId] || {}), ...patch, at: new Date().toISOString() };
+    const day = practiceDays[dateStr];
+    if (!day) return;
+    const before = (day.judgments || {})[assistantId] || {};
+    let next;
+    if (patch.remove) {
+      next = { ...before, remove: true };
+    } else {
+      next = { ...before, ...patch, at: new Date().toISOString() };
       if (!('finalCall' in patch) && next.trainerCall && next.leaderCall) {
         // 二人の判定が揃ったとき、一致していれば最終ジャッジを自動で埋める。
         // 割れている場合は話し合いが要るので空にして、明示的に押してもらう
         next.finalCall = next.trainerCall === next.leaderCall ? next.trainerCall : null;
       }
-      judgments[assistantId] = next;
-      return { ...prev, [dateStr]: { ...day, judgments } };
+    }
+    setPracticeDays(prev => {
+      const d = prev[dateStr];
+      if (!d) return prev;
+      const judgments = { ...(d.judgments || {}) };
+      if (patch.remove) delete judgments[assistantId];
+      else judgments[assistantId] = next;
+      return { ...prev, [dateStr]: { ...d, judgments } };
     });
+    applyJudgmentToCurriculum(dateStr, assistantId, next);
   }
 
   function toggleManualPairing(dateStr, trainerId, assistantId) {
@@ -2365,6 +2441,10 @@ export default function ShiftManager() {
                   </div>
                 </div>
               </div>
+
+              {hasMasterAccess && (
+                <JudgmentStats practiceDays={practiceDays} nameById={nameById} />
+              )}
             </div>
           )}
         </div>

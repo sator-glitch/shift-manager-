@@ -12,19 +12,23 @@ import { X } from 'lucide-react';
 // 逆順だとトレーナーの判定がただの追認になり、データとして意味を持たなくなる。
 // リーダー側のボタンはトレーナーの判定が入るまで押せないようにしてある。
 //
-// カリキュラムへの書き込みはここでは行わない。補講など勉強会以外の日に終わるものが
-// あり日付が自動で決まらないため、合格日は従来どおりカリキュラム画面で入れる。
+// 最終ジャッジを押した時点でカリキュラムの合格マトリクスに日付が入る。
+//   途中のカウント（大ロール人頭2など）… 不合格でも日付が入る（カウントは進む）
+//   最終のカウント／カウントでない項目 … 合格のときだけ日付が入る
+//   合格した場合、そのシリーズの残り（大ロール人頭1で合格なら2〜4）にも日付が入る＝飛び級
+//   ノーカウント（モデルの都合などで回数に数えない）… 何も書かない
+// 補講は勉強会以外の日に終わるので、従来どおりカリキュラム画面で日付を入れる。
 // ===========================================================================
 
 // 「デンマン人頭1」「ブリーチ人頭(リタッチ3)」のような連番項目を分解する
-function splitCountName(name) {
+export function splitCountName(name) {
   const m = /^(.*?)(\d+)(\)?)$/.exec(name || '');
   if (!m) return null;
   return { base: m[1] + '|' + m[3], num: Number(m[2]) };
 }
 
 // 連番項目なら「何回目 / 全何回」を返す。連番でなければ null（＝ふつうの合格項目）
-function countInfoOf(curricula, item) {
+export function countInfoOf(curricula, item) {
   const cur = splitCountName(item && item.name);
   if (!cur) return null;
   let max = cur.num;
@@ -85,13 +89,29 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
   const curricula = (curriculum && curriculum.curricula) || [];
   const records = (curriculum && curriculum.records) || {};
 
-  // その人がまだ合格していない、いちばん手前の項目
+  // その人がいま取り組んでいるはずの項目。
+  // 単に「最初の未合格項目」を返すと、前のほうに飛ばした項目が残っている人が
+  // ずっと手前に引き戻されてしまう（例：人頭まで進んでいるのにマニキュア流しが出る）。
+  // そのため「最後に合格した項目より後ろで、いちばん手前の未合格項目」を返す。
   function nextItemIdFor(assistantId) {
     const sid = staffLink && staffLink[assistantId];
     if (!sid) return '';
     const rec = records[sid] || {};
-    const found = curricula.find(c => !rec[c.id]);
+    let last = -1;
+    curricula.forEach((c, i) => { if (rec[c.id]) last = i; });
+    const found = curricula.slice(last + 1).find(c => !rec[c.id]);
     return found ? found.id : '';
+  }
+
+  // 最後に合格した項目より手前で、まだ合格していない項目（飛ばしているもの）
+  function skippedCountFor(assistantId) {
+    const sid = staffLink && staffLink[assistantId];
+    if (!sid) return 0;
+    const rec = records[sid] || {};
+    let last = -1;
+    curricula.forEach((c, i) => { if (rec[c.id]) last = i; });
+    if (last < 0) return 0;
+    return curricula.slice(0, last).filter(c => !rec[c.id]).length;
   }
   function passedDateOf(assistantId, currId) {
     const sid = staffLink && staffLink[assistantId];
@@ -158,9 +178,17 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                     {info.isFinal ? '最終 ' + info.num + '/' + info.max : 'カウント ' + info.num + '/' + info.max}
                   </span>
                 )}
+                <button type="button" onClick={() => onSet(dateStr, assistantId, { noCount: !j.noCount })}
+                  title="モデルの都合などで回数に数えない場合"
+                  style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', cursor: 'pointer',
+                    border: j.noCount ? '1px solid #A9742A' : '1px solid #E2DCCC',
+                    background: j.noCount ? '#A9742A' : '#FFFFFF',
+                    color: j.noCount ? '#FFFFFF' : '#8A8378' }}>
+                  ノーカウント
+                </button>
                 <button onClick={() => { setOpenFor(prev => ({ ...prev, [assistantId]: false })); onSet(dateStr, assistantId, { remove: true }); }}
                   title="この判定を取り消す"
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '2px' }}>
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '2px' }}>
                   <X size={14} />
                 </button>
               </div>
@@ -181,13 +209,28 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                   この人はカリキュラム側と紐付いていないため、次の項目を自動で選べません。項目は手で選んでください。
                 </div>
               )}
+              {linked && skippedCountFor(assistantId) > 0 && (
+                <div style={{ fontSize: '10.5px', color: '#8A8378' }}>
+                  手前に未合格の項目が{skippedCountFor(assistantId)}件あります（飛ばして進んでいる分）
+                </div>
+              )}
 
+              {j.noCount ? (
+                <div style={{ fontSize: '11.5px', color: '#A9742A', fontWeight: 700 }}>
+                  ノーカウントです。回数に数えず、カリキュラムにも何も書きません。
+                </div>
+              ) : (<>
               <CallRow label={trainerName + 'の判定'} value={j.trainerCall}
                 onPick={v => onSet(dateStr, assistantId, { trainerCall: v })} />
               <CallRow label="リーダーの判定" value={j.leaderCall} leader
                 locked={!j.trainerCall} lockMsg="トレーナーの判定を先に"
                 onPick={v => onSet(dateStr, assistantId, { leaderCall: v })} />
 
+              {j.finalCall === 'fail' && info && !info.isFinal && (
+                <div style={{ fontSize: '10.5px', color: '#2B4A3A' }}>
+                  途中のカウントなので、不合格でもこの日付が {item.name} に入ります
+                </div>
+              )}
               {(agreed || split) && (
                 <div style={{ borderTop: '1px dashed #E2DCCC', paddingTop: '9px' }}>
                   <CallRow label="最終ジャッジ" value={j.finalCall} strong
@@ -195,17 +238,40 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                   {agreed && (
                     <div style={{ fontSize: '11px', color: '#2B4A3A', fontWeight: 700, marginTop: '4px' }}>二人の判定が一致しています</div>
                   )}
-                  {split && (
+                  {split && !j.finalCall && (
                     <div style={{ fontSize: '11px', color: '#A9742A', fontWeight: 700, marginTop: '4px' }}>
                       判定が割れています。話し合った結果を最終ジャッジに入れてください。
                     </div>
                   )}
+                  {j.finalCall && (
+                    <div style={{ fontSize: '11px', color: '#8A8378', marginTop: '4px' }}>
+                      {writeMessage(item, info, j.finalCall, dateStr)}
+                    </div>
+                  )}
                 </div>
               )}
+              </>)}
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+// 最終ジャッジのあとに、カリキュラムへ何を書いたかをそのまま出す
+function writeMessage(item, info, finalCall, dateStr) {
+  if (!item) return '';
+  if (finalCall === 'pass') {
+    if (info && info.num < info.max) {
+      // 飛び級。残りのカウントにも同じ日付が入る
+      const base = item.name.replace(/(\d+)(\)?)$/, '');
+      return 'カリキュラムの ' + item.name + ' から ' + base + info.max + ' まで、' + dateStr + ' を記入しました（飛び級）';
+    }
+    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました';
+  }
+  if (info && !info.isFinal) {
+    return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました（カウントのみ）';
+  }
+  return '不合格なので、カリキュラムには日付を入れていません';
 }

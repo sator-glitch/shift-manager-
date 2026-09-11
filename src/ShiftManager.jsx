@@ -1038,41 +1038,33 @@ export default function ShiftManager() {
 
   const prevMonth = month === 0 ? 11 : month - 1;
   const prevYear = month === 0 ? year - 1 : year;
+  const prev2Month = prevMonth === 0 ? 11 : prevMonth - 1;
+  const prev2Year = prevMonth === 0 ? prevYear - 1 : prevYear;
 
-  const trainerMonthCounts = trainers.map(t => {
-    let count = 0; const byCategory = {};
-    let prevCount = 0; const prevByCategory = {};
+  // 今月・先月・先々月の担当回数をまとめて数える
+  function countMonths(personId, role) {
+    const res = { count: 0, byCategory: {}, prevCount: 0, prevByCategory: {}, prev2Count: 0, prev2ByCategory: {} };
     Object.entries(practiceDays).forEach(([ds, day]) => {
       const [y, m] = ds.split('-').map(Number);
-      if (y === year && m === month + 1) {
-        (day?.sessions || []).forEach(s => {
-          if (s.assigned?.trainers?.includes(t.id)) { count++; const cat = s.category || '未分類'; byCategory[cat] = (byCategory[cat] || 0) + 1; }
-        });
-      } else if (y === prevYear && m === prevMonth + 1) {
-        (day?.sessions || []).forEach(s => {
-          if (s.assigned?.trainers?.includes(t.id)) { prevCount++; const cat = s.category || '未分類'; prevByCategory[cat] = (prevByCategory[cat] || 0) + 1; }
-        });
-      }
-    });
-    return { ...t, count, byCategory, prevCount, prevByCategory };
-  });
-
-  const assistantMonthCounts = assistants.map(a => {
-    let count = 0;
-    const byCategory = {};
-    Object.entries(practiceDays).forEach(([ds, day]) => {
-      const [y, m] = ds.split('-').map(Number);
-      if (y !== year || m !== month + 1) return;
+      let cKey = null, bKey = null;
+      if (y === year && m === month + 1) { cKey = 'count'; bKey = 'byCategory'; }
+      else if (y === prevYear && m === prevMonth + 1) { cKey = 'prevCount'; bKey = 'prevByCategory'; }
+      else if (y === prev2Year && m === prev2Month + 1) { cKey = 'prev2Count'; bKey = 'prev2ByCategory'; }
+      else return;
       (day?.sessions || []).forEach(s => {
-        if (s.assigned?.assistants?.includes(a.id)) {
-          count++;
+        const ids = role === 'trainer' ? s.assigned?.trainers : s.assigned?.assistants;
+        if (ids?.includes(personId)) {
+          res[cKey]++;
           const cat = s.category || '未分類';
-          byCategory[cat] = (byCategory[cat] || 0) + 1;
+          res[bKey][cat] = (res[bKey][cat] || 0) + 1;
         }
       });
     });
-    return { ...a, count, byCategory };
-  });
+    return res;
+  }
+
+  const trainerMonthCounts = trainers.map(t => ({ ...t, ...countMonths(t.id, 'trainer') }));
+  const assistantMonthCounts = assistants.map(a => ({ ...a, ...countMonths(a.id, 'assistant') }));
 
   if (workspacesLoadError) {
     return (
@@ -1930,186 +1922,12 @@ export default function ShiftManager() {
                     </div>
                   )}
 
-                  {!closedToday && day && (
-                    <div style={{ background: '#FAF8F4', borderRadius: '10px', padding: '14px', marginBottom: '14px', border: '1px solid #EEE9DE', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-                      {/* Step 1: 参加アシスタント選択 + タイプ設定 */}
-                      <div>
-                        <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 1｜割り振り設定</div>
-                        {isUnlocked && (() => {
-                         const _ts = new Set();
-                         (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => _ts.add(id)));
-                         const _at = Array.from(_ts).filter(id => id !== day?.dayLeader);
-                         const _pt = day?.dayParticipants || [];
-                         if (_at.length === 0 || _pt.length === 0) return null;
-                         return (
-                           <div style={{ marginBottom: '12px' }}>
-                             <div style={{ fontSize: '11px', color: '#8A8378', marginBottom: '8px' }}>トレーナーを選択してから、担当アシスタントをタップして手動で割り振れます。未割り振りの残りは自動で均等配置できます。</div>
-                             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                               {_at.map(tid => {
-                                 const isSel = manualPairingTrainerId === tid;
-                                 const ac = (day?.dayPairings?.[tid] || []).length;
-                                 return (
-                                   <button key={tid} onClick={() => setManualPairingTrainerId(isSel ? null : tid)}
-                                     style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '2px solid #4361EE' : '1px solid #E2DCCC', background: isSel ? '#EEF2FF' : '#FFFFFF', color: isSel ? '#4361EE' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
-                                     {nameById(tid, 'trainer')}
-                                     {ac > 0 && <span style={{ fontSize: '10px', marginLeft: '4px', color: '#4A6B5A' }}>{ac}人</span>}
-                                   </button>
-                                 );
-                               })}
-                             </div>
-                             {manualPairingTrainerId && (
-                               <div style={{ padding: '10px', background: '#F0F4FF', borderRadius: '8px', marginBottom: '10px' }}>
-                                 <div style={{ fontSize: '11px', color: '#4361EE', fontWeight: 700, marginBottom: '8px' }}>{nameById(manualPairingTrainerId, 'trainer')} の担当アシスタントを選択</div>
-                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                   {_pt.map(aid => {
-                                     const _ia = (day?.dayPairings?.[manualPairingTrainerId] || []).includes(aid);
-                                     const _at2 = (day?.dayTypeMap || {})[aid];
-                                     const _ao = _at.some(tid => tid !== manualPairingTrainerId && (day?.dayPairings?.[tid] || []).includes(aid));
-                                     return (
-                                       <button key={aid} onClick={() => toggleManualPairing(ds, manualPairingTrainerId, aid)}
-                                         style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: _ia ? '1px solid #4361EE' : '1px solid #E2DCCC', background: _ia ? '#4361EE' : (_ao ? '#F5F5F5' : '#FFFFFF'), color: _ia ? '#FFFFFF' : (_ao ? '#B0A99A' : '#2B2823'), cursor: 'pointer', fontWeight: _ia ? 700 : 500 }}>
-                                         {nameById(aid, 'assistant')}
-                                         {_at2 && <span style={{ fontSize: '9px', marginLeft: '4px', padding: '1px 5px', borderRadius: '999px', background: assistantTypeColor(assistantTypes, _at2), color: '#FFFFFF', fontWeight: 700 }}>{_at2}</span>}
-                                         {_ao && !_ia && <span style={{ fontSize: '9px', marginLeft: '4px', color: '#B0A99A' }}>他に割済</span>}
-                                       </button>
-                                     );
-                                   })}
-                                 </div>
-                               </div>
-                             )}
-                             <button onClick={() => autoAssignAssistants(ds)}
-                               style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#4361EE', color: '#FFFFFF', cursor: 'pointer', fontWeight: 600 }}>
-                               <Shuffle size={13} /> 残りを自動でバランスよく割り振る
-                             </button>
-                           </div>
-                         );
-                        })()}
-                        {day?.dayPairings && Object.keys(day?.dayPairings).length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            {Object.entries(day?.dayPairings).map(([tid, aids]) => (
-                              <div key={tid}>
-                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px' }}>{nameById(tid, 'trainer')}</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
-                                  {aids.length > 0 ? aids.map(aid => {
-                                    const _r = (day?.dayTypeMap || {})[aid];
-                                    const _c = _r ? assistantTypeColor(assistantTypes, _r) : null;
-                                    return (
-                                      <div key={aid} style={{ fontSize: '12px', color: '#2B2823', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        {nameById(aid, 'assistant')}
-                                        {_r && <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: _c, color: '#FFFFFF', fontWeight: 700 }}>{_r}</span>}
-                                      </div>
-                                    );
-                                  }) : (
-                                    <div style={{ fontSize: '12px', color: '#B0A99A' }}>（担当なし）</div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                            {day?.dayLeader && (
-                              <div>
-                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#B0746A', marginBottom: '4px' }}>{nameById(day?.dayLeader, 'trainer')}</div>
-                                <div style={{ paddingLeft: '8px' }}><div style={{ fontSize: '12px', color: '#B0746A' }}>全体監督（リーダー）</div></div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {(!day?.dayPairings || Object.keys(day?.dayPairings).length === 0) && !isUnlocked && (
-                          <div style={{ fontSize: '12px', color: '#B0A99A' }}>まだ割り振りが行われていません</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                      {/* Step 2: リーダートレーナーの選択 */}
-                      {(() => {
-                        if (!day) return null;
-                        const trainerIdSet = new Set();
-                        (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)));
-                        const dayTrainerIds = Array.from(trainerIdSet);
-                        if (dayTrainerIds.length === 0) return null;
-                        return (
-                          <div>
-                            <div style={{ fontSize: '11px', fontWeight: 700, color: isUnlocked ? '#4361EE' : '#8A8378', marginBottom: '8px' }}>
-                              {isUnlocked ? 'Step 2｜リーダートレーナーを選択（アシスタントを持たず全体監督）' : 'リーダートレーナー'}
-                            </div>
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              {dayTrainerIds.map(tid => {
-                                const isLeader = day?.dayLeader === tid;
-                                const name = nameById(tid, 'trainer');
-                                return isUnlocked ? (
-                                  <button key={tid} onClick={() => setDayLeader(ds, tid)}
-                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isLeader ? '1px solid #B0746A' : '1px solid #E2DCCC', background: isLeader ? '#B0746A' : '#FFFFFF', color: isLeader ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isLeader ? 700 : 500 }}>
-                                    {name}{isLeader ? '（リーダー）' : ''}
-                                  </button>
-                                ) : isLeader ? (
-                                  <span key={tid} style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: '1px solid #B0746A', background: '#B0746A', color: '#FFFFFF', fontWeight: 700 }}>
-                                    {name}（リーダー）
-                                  </span>
-                                ) : null;
-                              })}
-                              {!isUnlocked && !day?.dayLeader && <span style={{ fontSize: '12px', color: '#B0A99A' }}>未設定</span>}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Step 3: 割り振り設定（手動+自動） */}
-                      {/* Step 3: 割り振り設定（手動+自動） */}
-                      {isUnlocked ? (
-                        <div>
-                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 3｜参加アシスタントを選んでタイプを設定</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {assistants.filter(a => !(a.offDates || []).includes(ds)).map(a => {
-                              const isParticipant = (day?.dayParticipants || []).includes(a.id);
-                              const currentType = (day?.dayTypeMap || {})[a.id] || null;
-                              return (
-                                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                  <button onClick={() => toggleDayParticipant(ds, a.id)}
-                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isParticipant ? '1px solid #2B2823' : '1px solid #E2DCCC', background: isParticipant ? '#2B2823' : '#FFFFFF', color: isParticipant ? '#FAF8F4' : '#8A8378', cursor: 'pointer', fontWeight: isParticipant ? 700 : 500 }}>
-                                    {a.name}
-                                  </button>
-                                  {isParticipant && assistantTypes.length > 0 && (
-                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                      {assistantTypes.map(t => {
-                                        const isSel = currentType === t;
-                                        const tColor = assistantTypeColor(assistantTypes, t);
-                                        return (
-                                          <button key={t} onClick={() => setAssistantDayType(ds, a.id, isSel ? null : t)}
-                                            style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '999px', border: isSel ? `1px solid ${tColor}` : '1px solid #E2DCCC', background: isSel ? tColor : '#FFFFFF', color: isSel ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
-                                            {t}
-                                          </button>
-                                        );
-                                      })}
-                                      {!currentType && <span style={{ fontSize: '10px', color: '#B0A99A' }}>タイプ未設定</span>}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                            {assistants.length === 0 && <span style={{ fontSize: '12px', color: '#B0A99A' }}>人員登録タブでアシスタントを追加してください</span>}
-                          </div>
-                        </div>
-                      ) : (day?.dayParticipants && day?.dayParticipants.length > 0) && (
-                        <div>
-                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#8A8378', marginBottom: '8px' }}>この日の参加アシスタント</div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                            {(day?.dayParticipants || []).map(aid => {
-                              const aType = (day?.dayTypeMap || {})[aid];
-                              const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
-                              return (
-                                <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                  {nameById(aid, 'assistant')}
-                                  {aType && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: tColor, color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-
+                  {/* Step 1: 時間帯・トレーナー・アシスタントの設定 */}
                   {day && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: isUnlocked ? '#4361EE' : '#8A8378' }}>
+                      {isUnlocked ? 'Step 1｜時間帯・トレーナー・アシスタントを設定' : '時間帯'}
+                    </div>
                     {(day?.sessions || []).map(session => (
                       <div key={session.id} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '12px', background: '#FCFBF8' }}>
                         {isUnlocked ? (
@@ -2218,6 +2036,183 @@ export default function ShiftManager() {
                     ))}
                   </div>
                   )}
+
+                      {/* Step 2: リーダートレーナーの選択 */}
+                      {(() => {
+                        if (!day) return null;
+                        const trainerIdSet = new Set();
+                        (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => trainerIdSet.add(id)));
+                        const dayTrainerIds = Array.from(trainerIdSet);
+                        if (dayTrainerIds.length === 0) return null;
+                        return (
+                          <div>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: isUnlocked ? '#4361EE' : '#8A8378', marginBottom: '8px' }}>
+                              {isUnlocked ? 'Step 2｜リーダートレーナーを選択（アシスタントを持たず全体監督）' : 'リーダートレーナー'}
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {dayTrainerIds.map(tid => {
+                                const isLeader = day?.dayLeader === tid;
+                                const name = nameById(tid, 'trainer');
+                                return isUnlocked ? (
+                                  <button key={tid} onClick={() => setDayLeader(ds, tid)}
+                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isLeader ? '1px solid #B0746A' : '1px solid #E2DCCC', background: isLeader ? '#B0746A' : '#FFFFFF', color: isLeader ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isLeader ? 700 : 500 }}>
+                                    {name}{isLeader ? '（リーダー）' : ''}
+                                  </button>
+                                ) : isLeader ? (
+                                  <span key={tid} style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: '1px solid #B0746A', background: '#B0746A', color: '#FFFFFF', fontWeight: 700 }}>
+                                    {name}（リーダー）
+                                  </span>
+                                ) : null;
+                              })}
+                              {!isUnlocked && !day?.dayLeader && <span style={{ fontSize: '12px', color: '#B0A99A' }}>未設定</span>}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Step 3: 参加アシスタント選択＋タイプ設定 */}
+                      {isUnlocked ? (
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 3｜参加アシスタントを選んでタイプを設定</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {assistants.filter(a => !(a.offDates || []).includes(ds)).map(a => {
+                              const isParticipant = (day?.dayParticipants || []).includes(a.id);
+                              const currentType = (day?.dayTypeMap || {})[a.id] || null;
+                              return (
+                                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <button onClick={() => toggleDayParticipant(ds, a.id)}
+                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isParticipant ? '1px solid #2B2823' : '1px solid #E2DCCC', background: isParticipant ? '#2B2823' : '#FFFFFF', color: isParticipant ? '#FAF8F4' : '#8A8378', cursor: 'pointer', fontWeight: isParticipant ? 700 : 500 }}>
+                                    {a.name}
+                                  </button>
+                                  {isParticipant && assistantTypes.length > 0 && (
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                      {assistantTypes.map(t => {
+                                        const isSel = currentType === t;
+                                        const tColor = assistantTypeColor(assistantTypes, t);
+                                        return (
+                                          <button key={t} onClick={() => setAssistantDayType(ds, a.id, isSel ? null : t)}
+                                            style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '999px', border: isSel ? `1px solid ${tColor}` : '1px solid #E2DCCC', background: isSel ? tColor : '#FFFFFF', color: isSel ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
+                                            {t}
+                                          </button>
+                                        );
+                                      })}
+                                      {!currentType && <span style={{ fontSize: '10px', color: '#B0A99A' }}>タイプ未設定</span>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {assistants.length === 0 && <span style={{ fontSize: '12px', color: '#B0A99A' }}>人員登録タブでアシスタントを追加してください</span>}
+                          </div>
+                        </div>
+                      ) : (day?.dayParticipants && day?.dayParticipants.length > 0) && (
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#8A8378', marginBottom: '8px' }}>この日の参加アシスタント</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {(day?.dayParticipants || []).map(aid => {
+                              const aType = (day?.dayTypeMap || {})[aid];
+                              const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
+                              return (
+                                <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  {nameById(aid, 'assistant')}
+                                  {aType && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: tColor, color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                  {!closedToday && day && (
+                    <div style={{ background: '#FAF8F4', borderRadius: '10px', padding: '14px', marginBottom: '14px', border: '1px solid #EEE9DE', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                      {/* Step 4: 担当の割り振り（手動＋自動） */}
+                      <div>
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: '#4361EE', marginBottom: '8px' }}>Step 4｜担当の割り振り</div>
+                        {isUnlocked && (() => {
+                         const _ts = new Set();
+                         (day?.sessions || []).forEach(s => (s.assigned?.trainers || []).forEach(id => _ts.add(id)));
+                         const _at = Array.from(_ts).filter(id => id !== day?.dayLeader);
+                         const _pt = day?.dayParticipants || [];
+                         if (_at.length === 0 || _pt.length === 0) return null;
+                         return (
+                           <div style={{ marginBottom: '12px' }}>
+                             <div style={{ fontSize: '11px', color: '#8A8378', marginBottom: '8px' }}>トレーナーを選択してから、担当アシスタントをタップして手動で割り振れます。未割り振りの残りは自動で均等配置できます。</div>
+                             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                               {_at.map(tid => {
+                                 const isSel = manualPairingTrainerId === tid;
+                                 const ac = (day?.dayPairings?.[tid] || []).length;
+                                 return (
+                                   <button key={tid} onClick={() => setManualPairingTrainerId(isSel ? null : tid)}
+                                     style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '2px solid #4361EE' : '1px solid #E2DCCC', background: isSel ? '#EEF2FF' : '#FFFFFF', color: isSel ? '#4361EE' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
+                                     {nameById(tid, 'trainer')}
+                                     {ac > 0 && <span style={{ fontSize: '10px', marginLeft: '4px', color: '#4A6B5A' }}>{ac}人</span>}
+                                   </button>
+                                 );
+                               })}
+                             </div>
+                             {manualPairingTrainerId && (
+                               <div style={{ padding: '10px', background: '#F0F4FF', borderRadius: '8px', marginBottom: '10px' }}>
+                                 <div style={{ fontSize: '11px', color: '#4361EE', fontWeight: 700, marginBottom: '8px' }}>{nameById(manualPairingTrainerId, 'trainer')} の担当アシスタントを選択</div>
+                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                   {_pt.map(aid => {
+                                     const _ia = (day?.dayPairings?.[manualPairingTrainerId] || []).includes(aid);
+                                     const _at2 = (day?.dayTypeMap || {})[aid];
+                                     const _ao = _at.some(tid => tid !== manualPairingTrainerId && (day?.dayPairings?.[tid] || []).includes(aid));
+                                     return (
+                                       <button key={aid} onClick={() => toggleManualPairing(ds, manualPairingTrainerId, aid)}
+                                         style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: _ia ? '1px solid #4361EE' : '1px solid #E2DCCC', background: _ia ? '#4361EE' : (_ao ? '#F5F5F5' : '#FFFFFF'), color: _ia ? '#FFFFFF' : (_ao ? '#B0A99A' : '#2B2823'), cursor: 'pointer', fontWeight: _ia ? 700 : 500 }}>
+                                         {nameById(aid, 'assistant')}
+                                         {_at2 && <span style={{ fontSize: '9px', marginLeft: '4px', padding: '1px 5px', borderRadius: '999px', background: assistantTypeColor(assistantTypes, _at2), color: '#FFFFFF', fontWeight: 700 }}>{_at2}</span>}
+                                         {_ao && !_ia && <span style={{ fontSize: '9px', marginLeft: '4px', color: '#B0A99A' }}>他に割済</span>}
+                                       </button>
+                                     );
+                                   })}
+                                 </div>
+                               </div>
+                             )}
+                             <button onClick={() => autoAssignAssistants(ds)}
+                               style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#4361EE', color: '#FFFFFF', cursor: 'pointer', fontWeight: 600 }}>
+                               <Shuffle size={13} /> 残りを自動でバランスよく割り振る
+                             </button>
+                           </div>
+                         );
+                        })()}
+                        {day?.dayPairings && Object.keys(day?.dayPairings).length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {Object.entries(day?.dayPairings).map(([tid, aids]) => (
+                              <div key={tid}>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px' }}>{nameById(tid, 'trainer')}</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
+                                  {aids.length > 0 ? aids.map(aid => {
+                                    const _r = (day?.dayTypeMap || {})[aid];
+                                    const _c = _r ? assistantTypeColor(assistantTypes, _r) : null;
+                                    return (
+                                      <div key={aid} style={{ fontSize: '12px', color: '#2B2823', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        {nameById(aid, 'assistant')}
+                                        {_r && <span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '999px', background: _c, color: '#FFFFFF', fontWeight: 700 }}>{_r}</span>}
+                                      </div>
+                                    );
+                                  }) : (
+                                    <div style={{ fontSize: '12px', color: '#B0A99A' }}>（担当なし）</div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                            {day?.dayLeader && (
+                              <div>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#B0746A', marginBottom: '4px' }}>{nameById(day?.dayLeader, 'trainer')}</div>
+                                <div style={{ paddingLeft: '8px' }}><div style={{ fontSize: '12px', color: '#B0746A' }}>全体監督（リーダー）</div></div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(!day?.dayPairings || Object.keys(day?.dayPairings).length === 0) && !isUnlocked && (
+                          <div style={{ fontSize: '12px', color: '#B0A99A' }}>まだ割り振りが行われていません</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -2281,18 +2276,18 @@ export default function ShiftManager() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
                   <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>
-                    トレーナー<span style={{ marginLeft: '6px', color: '#C9C2B2' }}>（今月 / 前月）</span>
+                    トレーナー<span style={{ marginLeft: '6px', color: '#C9C2B2' }}>（今月 / 先月 / 先々月）</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {trainerMonthCounts.map(t => {
-                      const thisCount = balanceFilterCategory === null ? t.count : (t.byCategory[balanceFilterCategory] || 0);
-                      const pCount = balanceFilterCategory === null ? t.prevCount : (t.prevByCategory[balanceFilterCategory] || 0);
+                      const pick = (c, bc) => (balanceFilterCategory === null ? c : (bc[balanceFilterCategory] || 0));
                       return (
                         <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
                           <span>{t.name}</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ fontWeight: 700, color: '#2B2823' }}>{thisCount}回</span>
-                            <span style={{ fontSize: '10px', color: '#B0A99A' }}>/ {pCount}回</span>
+                            <span style={{ fontWeight: 700, color: '#2B2823' }}>{pick(t.count, t.byCategory)}回</span>
+                            <span style={{ fontSize: '10px', color: '#B0A99A' }}>/ {pick(t.prevCount, t.prevByCategory)}回</span>
+                            <span style={{ fontSize: '10px', color: '#C9C2B2' }}>/ {pick(t.prev2Count, t.prev2ByCategory)}回</span>
                           </span>
                         </div>
                       );
@@ -2300,16 +2295,23 @@ export default function ShiftManager() {
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>アシスタント</div>
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px' }}>
+                    アシスタント<span style={{ marginLeft: '6px', color: '#C9C2B2' }}>（今月 / 先月 / 先々月）</span>
+                  </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
-                    {assistantMonthCounts.map(a => (
-                      <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <span>{a.name}</span>
-                        <span style={{ fontWeight: 700, color: '#2B2823' }}>
-                          {balanceFilterCategory === null ? a.count : (a.byCategory[balanceFilterCategory] || 0)}回
-                        </span>
-                      </div>
-                    ))}
+                    {assistantMonthCounts.map(a => {
+                      const pick = (c, bc) => (balanceFilterCategory === null ? c : (bc[balanceFilterCategory] || 0));
+                      return (
+                        <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', alignItems: 'center' }}>
+                          <span>{a.name}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontWeight: 700, color: '#2B2823' }}>{pick(a.count, a.byCategory)}回</span>
+                            <span style={{ fontSize: '10px', color: '#B0A99A' }}>/ {pick(a.prevCount, a.prevByCategory)}回</span>
+                            <span style={{ fontSize: '10px', color: '#C9C2B2' }}>/ {pick(a.prev2Count, a.prev2ByCategory)}回</span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

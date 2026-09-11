@@ -264,9 +264,10 @@ function writeMessage(item, info, finalCall, dateStr) {
   if (!item) return '';
   if (finalCall === 'pass') {
     if (info && info.num < info.max) {
-      // 飛び級。残りのカウントにも同じ日付が入る
+      // 残りのカウントは実際にやった日ではないので、日付ではなく ◎（飛び級）を付ける
       const base = item.name.replace(/(\d+)(\)?)$/, '');
-      return 'カリキュラムの ' + item.name + ' から ' + base + info.max + ' まで、' + dateStr + ' を記入しました（飛び級）';
+      const rest = info.num + 1 === info.max ? base + info.max : base + (info.num + 1) + '〜' + base + info.max;
+      return 'カリキュラムの ' + item.name + ' に ' + dateStr + '、' + rest + ' に ◎（飛び級）を付けました';
     }
     return 'カリキュラムの ' + item.name + ' に ' + dateStr + ' を記入しました';
   }

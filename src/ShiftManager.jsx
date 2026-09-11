@@ -1062,24 +1062,33 @@ export default function ShiftManager() {
           })
         : [item];
 
-      // この練習会の日付を入れるべき項目
-      let desired = [];
-      if (!judgment.remove && !judgment.noCount) {
-        if (judgment.finalCall === 'pass') {
-          desired = scope.map(c => c.id);              // 合格なら残りのカウントも埋める
-        } else if (judgment.finalCall === 'fail' && info && !info.isFinal) {
-          desired = [item.id];                         // 途中のカウントは不合格でも1回分進む
-        }
-      }
-
       const rec = { ...((data.records || {})[staffId] || {}) };
+      // この判定でこの日に書いたものかどうか。undo で他人の記入を巻き込まないための判断に使う
+      const wasOurs = rec[item.id] === dateStr;
+      const skipIds = scope.filter(c => c.id !== item.id).map(c => c.id);
+
+      // 実際に判定した項目には日付を入れる
+      let dateFor = null;
+      if (!judgment.remove && !judgment.noCount) {
+        if (judgment.finalCall === 'pass') dateFor = dateStr;
+        else if (judgment.finalCall === 'fail' && info && !info.isFinal) dateFor = dateStr;
+      }
+      // 合格した場合、そのシリーズの残りは日付ではなく ◎（飛び級）を付ける
+      const markSkips = dateFor !== null && judgment.finalCall === 'pass' && skipIds.length > 0;
+
       let changed = false;
-      scope.forEach(c => {
-        if (desired.indexOf(c.id) >= 0) {
-          if (rec[c.id] !== dateStr) { rec[c.id] = dateStr; changed = true; }
-        } else if (rec[c.id] === dateStr) {
-          // 消すのはこの練習会の日に自分で入れた分だけ。手入力された日付は触らない
-          delete rec[c.id]; changed = true;
+      if (dateFor) {
+        if (rec[item.id] !== dateFor) { rec[item.id] = dateFor; changed = true; }
+      } else if (rec[item.id] === dateStr) {
+        // 消すのはこの練習会の日に自分で入れた分だけ。手入力された日付は触らない
+        delete rec[item.id]; changed = true;
+      }
+      skipIds.forEach(id => {
+        if (markSkips) {
+          if (rec[id] !== '◎') { rec[id] = '◎'; changed = true; }
+        } else if (wasOurs && rec[id] === '◎') {
+          // 自分が付けた飛び級を取り消す。日付が入っているものには触らない
+          delete rec[id]; changed = true;
         }
       });
       if (!changed) return;

@@ -470,51 +470,18 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // ── 学年比較：日数計算の起点となるカテゴリ（先頭項目はカテゴリスタート日 or 入社日）
   const CATEGORIES_WITH_START = ['カラー技術', 'ブロー技術', 'カット技術'];
 
-  // グループ（例：ブリーチ人頭）の合格日を算出。全小項目が埋まって初めて確定し、最新日付を採用
-  function getGroupPassDate(staffId, prefix) {
-    const { groups } = buildCurrGroups(data.curricula);
-    const items = groups[prefix] || [];
-    const records = data.records[staffId] || {};
-    const vals = items.map(item => records[item.id]);
-    const allFilled = vals.length > 0 && vals.every(v => !!v);
-    if (!allFilled) return undefined;
-    const dateVals = vals.filter(v => v !== '◎');
-    if (dateVals.length === 0) return '◎';
-    return dateVals.sort().slice(-1)[0];
-  }
-
-  // 指定項目（単品のみ。グループは対象外）の起算日を求める
+  // 学年比較の起算日。入社日（カテゴリスタート日があればそれ）に固定する。
+  //
+  // 以前は「同カテゴリで1個前の項目の合格日」または startBasisIds で指定した項目を
+  // 起点にしていた。しかし実際には、カリキュラムを順番どおりに進める人がほとんどおらず
+  // （順序の逆転が335箇所・65人中64人）、前の項目をまだ取っていない／後で取った人が
+  // 構造的に負の日数になっていた。学年比較は代ごとの速さを並べて比べる画面なので、
+  // 全員を同じ起点（入社日）で測るほうが比較として正しい。画面の説明文も
+  // 「入社日から合格日までの日数で比較」と書いてあり、計算がそれに追いついた形。
+  //
+  // 入社前に合格した項目（2026年度のクロスチェンジなど）は負の日数になるが、
+  // これは入社前研修で取ったという事実を表しているので、そのまま表示する。
   function getItemStartDate(staff, item) {
-    const basisIds = item.startBasisIds || [];
-    if (basisIds.includes('__join__')) {
-      // 明示的に「入社日を起点」に固定（同カテゴリの1個前の項目には連鎖させない）
-      return staff.joinDate || null;
-    }
-    if (basisIds.length > 0) {
-      // 明示的な起算元（1つ＝単純依存／複数＝合流）。全部埋まって初めて確定し、最新日付を採用
-      // "group:プレフィックス" 形式は、ブリーチ人頭のようなグループ項目の合格日を参照する
-      const vals = basisIds.map(ref => {
-        if (typeof ref === 'string' && ref.startsWith('group:')) {
-          return getGroupPassDate(staff.id, ref.slice('group:'.length));
-        }
-        return (data.records[staff.id] || {})[ref];
-      });
-      const allFilled = vals.length > 0 && vals.every(v => !!v);
-      if (!allFilled) return null;
-      const dateVals = vals.filter(v => v !== '◎');
-      if (dateVals.length === 0) return null; // 全項目◎で日付が無い→計算不能
-      return dateVals.sort().slice(-1)[0];
-    }
-    // 明示設定なし：同カテゴリ内の並び順で「1個前」の単品項目の合格日を起点にする
-    const sameCategorySingles = data.curricula.filter(c => c.category === item.category);
-    const idx = sameCategorySingles.findIndex(c => c.id === item.id);
-    if (idx > 0) {
-      const prevItem = sameCategorySingles[idx - 1];
-      const prevVal = (data.records[staff.id] || {})[prevItem.id];
-      if (!prevVal || prevVal === '◎') return null; // 前の項目が未合格、または飛び級で日付なし
-      return prevVal;
-    }
-    // カテゴリの最初の項目：カテゴリスタート日があればそれ、無ければ入社日
     if (CATEGORIES_WITH_START.includes(item.category)) {
       const cs = (data.categoryStartDates?.[staff.id] || {})[item.category];
       if (cs) return cs;
@@ -1151,7 +1118,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
             {canManage && (
               <div style={{ background:'#F5F8FF', border:'1px solid #C7D2FE', borderRadius:'10px', padding:'12px 16px', marginBottom:'10px' }}>
                 <div style={{ fontSize:'12px', fontWeight:700, color:'#4361EE', marginBottom:'6px' }}>起算日の一括セットアップ</div>
-                <div style={{ fontSize:'11px', color:'#6B7BB8', marginBottom:'8px' }}>アシスタント基礎技術・パーマの依存関係を、項目名を照合して一括設定する。項目名が一致しないと反映されないので注意（実行後に結果を表示）。</div>
+                <div style={{ fontSize:'11px', color:'#6B7BB8', marginBottom:'8px' }}>アシスタント基礎技術・パーマの依存関係を、項目名を照合して一括設定する。項目名が一致しないと反映されないので注意（実行後に結果を表示）。<br /><b>学年比較の日数は入社日起点に変更したため、この設定はもう日数計算には使われていません。</b></div>
                 <button onClick={runStartBasisSetup} style={{ padding:'7px 14px', borderRadius:'7px', border:'none', background:'#4361EE', color:'#FFFFFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>実行する</button>
                 {setupReport && (
                   <div style={{ marginTop:'10px', fontSize:'11px', lineHeight:1.7 }}>

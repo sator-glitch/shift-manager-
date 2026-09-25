@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen } from 'lucide-react';
+import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen, Pencil } from 'lucide-react';
 import CurriculumApp from './Curriculum.jsx';
 import JudgmentPanel, { countInfoOf, splitCountName, asEntryList } from './JudgmentPanel.jsx';
 import JudgmentStats from './JudgmentStats.jsx';
@@ -198,6 +198,8 @@ export default function ShiftManager() {
   const [practiceDays, setPracticeDays] = useState({}); // dateStr -> { sessions: [ {id, category, startTime, endTime, trainerAvail, assistantAvail, assigned} ] }
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('trainer');
+  const [editingPersonId, setEditingPersonId] = useState(null);   // 名前を編集中の人
+  const [editingPersonName, setEditingPersonName] = useState('');
   const [curriculum, setCurriculum] = useState(null);
   const [staffLink, setStaffLink] = useState({});
   const [newCategory, setNewCategory] = useState('');
@@ -736,6 +738,25 @@ export default function ShiftManager() {
     }
     const nextList = workspaces.map(w => w.id === activeWorkspaceId ? { ...w, dayNotes: notes } : w);
     await persistWorkspaceList(nextList);
+  }
+
+  // 名前の変更。IDはそのままなので、割り振り・休み・判定の記録はすべて残る。
+  // カリキュラムとの対応表（shift_curriculum_link_v1）もIDで結んでいるため影響しない。
+  function startRenamePerson(person) {
+    setEditingPersonId(person.id);
+    setEditingPersonName(person.name);
+  }
+  function cancelRenamePerson() {
+    setEditingPersonId(null);
+    setEditingPersonName('');
+  }
+  function saveRenamePerson(type) {
+    const name = editingPersonName.trim();
+    if (!name) { cancelRenamePerson(); return; } // 空にはできない
+    const updater = prev => prev.map(p => (p.id === editingPersonId ? { ...p, name } : p));
+    if (type === 'trainer') setTrainers(updater);
+    else setAssistants(updater);
+    cancelRenamePerson();
   }
 
   function removePerson(id, type) {
@@ -1866,16 +1887,37 @@ export default function ShiftManager() {
                     {isUnlocked && (
                       <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
                     )}
-                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                    {editingPersonId === t.id ? (
+                      <input autoFocus value={editingPersonName}
+                        onChange={e => setEditingPersonName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveRenamePerson('trainer'); if (e.key === 'Escape') cancelRenamePerson(); }}
+                        style={{ flex: 1, minWidth: 0, padding: '5px 9px', borderRadius: '6px', border: '1px solid #2B2823', fontSize: '13px', fontFamily: 'inherit', background: '#FFFFFF', color: '#2B2823' }} />
+                    ) : (
+                      <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
-                      <Download size={14} />
-                    </button>
-                    {isUnlocked && (
-                      <button onClick={() => removePerson(t.id, 'trainer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
-                        <Trash2 size={14} />
-                      </button>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
+                    {editingPersonId === t.id ? (
+                      <>
+                        <button onClick={() => saveRenamePerson('trainer')} style={{ fontSize: '11px', fontWeight: 700, fontFamily: 'inherit', padding: '5px 11px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', cursor: 'pointer' }}>保存</button>
+                        <button onClick={cancelRenamePerson} style={{ fontSize: '11px', fontFamily: 'inherit', padding: '5px 9px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', cursor: 'pointer' }}>やめる</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                          <Download size={14} />
+                        </button>
+                        {isUnlocked && (
+                          <button onClick={() => startRenamePerson(t)} title="名前を変更" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                            <Pencil size={13} />
+                          </button>
+                        )}
+                        {isUnlocked && (
+                          <button onClick={() => removePerson(t.id, 'trainer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1889,15 +1931,36 @@ export default function ShiftManager() {
               {assistants.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
               {assistants.map(a => (
                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', gap: '8px' }}>
-                  <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
-                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                    <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
-                      <Download size={14} />
-                    </button>
-                    {isUnlocked && (
-                      <button onClick={() => removePerson(a.id, 'assistant')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
-                        <Trash2 size={14} />
-                      </button>
+                  {editingPersonId === a.id ? (
+                    <input autoFocus value={editingPersonName}
+                      onChange={e => setEditingPersonName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveRenamePerson('assistant'); if (e.key === 'Escape') cancelRenamePerson(); }}
+                      style={{ flex: 1, minWidth: 0, padding: '5px 9px', borderRadius: '6px', border: '1px solid #2B2823', fontSize: '13px', fontFamily: 'inherit', background: '#FFFFFF', color: '#2B2823' }} />
+                  ) : (
+                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
+                  )}
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
+                    {editingPersonId === a.id ? (
+                      <>
+                        <button onClick={() => saveRenamePerson('assistant')} style={{ fontSize: '11px', fontWeight: 700, fontFamily: 'inherit', padding: '5px 11px', borderRadius: '6px', border: 'none', background: '#2B2823', color: '#FAF8F4', cursor: 'pointer' }}>保存</button>
+                        <button onClick={cancelRenamePerson} style={{ fontSize: '11px', fontFamily: 'inherit', padding: '5px 9px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', cursor: 'pointer' }}>やめる</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                          <Download size={14} />
+                        </button>
+                        {isUnlocked && (
+                          <button onClick={() => startRenamePerson(a)} title="名前を変更" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
+                            <Pencil size={13} />
+                          </button>
+                        )}
+                        {isUnlocked && (
+                          <button onClick={() => removePerson(a.id, 'assistant')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', padding: '4px' }}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

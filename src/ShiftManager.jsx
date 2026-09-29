@@ -180,6 +180,7 @@ export default function ShiftManager() {
   const [snapshotList, setSnapshotList] = useState([]);
   const [draggedWorkspaceId, setDraggedWorkspaceId] = useState(null);
   const [draggedTrainerId, setDraggedTrainerId] = useState(null);
+  const [draggedAssistantId, setDraggedAssistantId] = useState(null);
 
   const [masterPassword, setMasterPassword] = useState('');
   const [masterPasswordLoaded, setMasterPasswordLoaded] = useState(false);
@@ -782,6 +783,26 @@ export default function ShiftManager() {
 
   function handleTrainerDragEnd() {
     setDraggedTrainerId(null);
+  }
+
+  // アシスタントの並べ替え。トレーナーと同じ仕組み。
+  // 並び順はこの配列の順序がそのまま各画面の表示順になる
+  function handleAssistantDragStart(id) {
+    setDraggedAssistantId(id);
+  }
+  function handleAssistantDragOver(e, overId) {
+    e.preventDefault();
+    if (!draggedAssistantId || draggedAssistantId === overId) return;
+    const fromIdx = assistants.findIndex(a => a.id === draggedAssistantId);
+    const toIdx = assistants.findIndex(a => a.id === overId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const next = [...assistants];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setAssistants(next);
+  }
+  function handleAssistantDragEnd() {
+    setDraggedAssistantId(null);
   }
 
   function addCategory() {
@@ -1877,14 +1898,14 @@ export default function ShiftManager() {
               {trainers.map(t => (
                 <div
                   key={t.id}
-                  draggable={isUnlocked}
+                  draggable={isUnlocked && editingPersonId !== t.id}
                   onDragStart={() => isUnlocked && handleTrainerDragStart(t.id)}
                   onDragOver={(e) => isUnlocked && handleTrainerDragOver(e, t.id)}
                   onDragEnd={() => isUnlocked && handleTrainerDragEnd()}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', opacity: draggedTrainerId === t.id ? 0.5 : 1, gap: '8px' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
-                    {isUnlocked && (
+                    {isUnlocked && editingPersonId !== t.id && (
                       <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
                     )}
                     {editingPersonId === t.id ? (
@@ -1930,7 +1951,17 @@ export default function ShiftManager() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', maxHeight: '320px', overflowY: 'auto' }}>
               {assistants.length === 0 && <div style={{ fontSize: '13px', color: '#B0A99A' }}>まだ登録されていません</div>}
               {assistants.map(a => (
-                <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', gap: '8px' }}>
+                <div
+                  key={a.id}
+                  draggable={isUnlocked && editingPersonId !== a.id}
+                  onDragStart={() => isUnlocked && handleAssistantDragStart(a.id)}
+                  onDragOver={(e) => isUnlocked && handleAssistantDragOver(e, a.id)}
+                  onDragEnd={() => isUnlocked && handleAssistantDragEnd()}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#FAF8F4', borderRadius: '8px', opacity: draggedAssistantId === a.id ? 0.5 : 1, gap: '8px' }}
+                >
+                  {isUnlocked && editingPersonId !== a.id && (
+                    <span style={{ cursor: 'grab', color: '#C9C2B2', fontSize: '14px', lineHeight: 1, userSelect: 'none', flexShrink: 0 }} title="ドラッグして並べ替え">⠿</span>
+                  )}
                   {editingPersonId === a.id ? (
                     <input autoFocus value={editingPersonName}
                       onChange={e => setEditingPersonName(e.target.value)}

@@ -1,3 +1,6 @@
 node_modules
 dist
 package-lock.json
+
+# viteがビルド中に作る一時ファイル。消す権限がない環境では残るのでコミットしない
+vite.config.js.timestamp-*

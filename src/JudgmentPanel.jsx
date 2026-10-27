@@ -127,13 +127,14 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
   // その人がいま取り組んでいるはずの項目。単に「最初の未合格項目」を返すと、前のほうに
   // 飛ばした項目が残っている人がずっと手前に引き戻されるため、最後に合格した項目より
   // 後ろで、いちばん手前の未合格項目を返す。excludeIds は同じ日に既に選んでいる項目。
+  // 合格は順不同で付くので、「一番先まで進んだ所の次」ではなく
+  // 上から順に見てまだ記録のない最初の項目を初期値にする。
+  // こうしないと、手前の項目が一度飛ばされたあと候補に二度と出てこない。
   function nextItemIdFor(assistantId, excludeIds) {
     const sid = staffLink && staffLink[assistantId];
     if (!sid) return '';
     const rec = records[sid] || {};
-    let last = -1;
-    curricula.forEach((c, i) => { if (rec[c.id]) last = i; });
-    const found = curricula.slice(last + 1).find(c => !rec[c.id] && (excludeIds || []).indexOf(c.id) < 0);
+    const found = curricula.find(c => !rec[c.id] && (excludeIds || []).indexOf(c.id) < 0);
     return found ? found.id : '';
   }
   function skippedCountFor(assistantId) {
@@ -243,7 +244,7 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                     )}
                     {linked && idx === 0 && skippedCountFor(assistantId) > 0 && (
                       <div style={{ fontSize: '10.5px', color: '#8A8378' }}>
-                        手前に未合格の項目が{skippedCountFor(assistantId)}件あります（飛ばして進んでいる分）
+                        手前に未合格の項目が{skippedCountFor(assistantId)}件あります（順不同なので候補にも出ます）
                       </div>
                     )}
 

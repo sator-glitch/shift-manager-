@@ -1097,6 +1097,10 @@ export default function ShiftManager() {
         }
       }
 
+      // 連動（飛び級の◎）は「末尾が数字の同一シリーズ」だけ。
+      // 例: ブロー大ロール人頭1〜4 / ブリーチ人頭(リタッチ1〜3) は連動する。
+      // トーンアップ人頭・トーンダウン人頭・ホイルワークウィッグ・ブリーチウィッグ(リタッチ) など
+      // 番号のない項目は順不同で受けるので、絶対に他の項目へ書かない（scope は自分1件だけ）。
       const info = countInfoOf(data.curricula, item);
       const cur = splitCountName(item.name);
       const scope = (info && cur)

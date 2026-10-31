@@ -225,7 +225,17 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     setData(prev => { const next = fn(prev); persist(next); return next; });
   }
 
-  // ── 本人が入れた日付の印（sources）。学年比較にも使うが見分けられるようにしておく
+  // ── 学年によってカリキュラムが違う項目。当時その項目が無かった期は「対象外」。
+  //    data.cohortScope = { カリキュラムID: ['2023年入社', ...] } ＝ その期は対象外
+  function excludedCohorts(currId) {
+    const v = (data.cohortScope || {})[currId];
+    return Array.isArray(v) ? v : [];
+  }
+  function outOfScope(staff, currId) {
+    return excludedCohorts(currId).indexOf(staff.cohort) >= 0;
+  }
+
+  // ── 本人が入れた日付の印（sources）
   // 'self' … 本人がノートを見て入れた日付。学年比較にも使うが、見分けられるよう印を残す
   function sourceOf(staffId, currId) {
     return ((data.sources || {})[staffId] || {})[currId] || null;
@@ -780,7 +790,15 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                             const val = rec[c.id];
                             const isSkip = val === '◎';
                             const src = sourceOf(s.id, c.id);
+                            const oos = outOfScope(s, c.id);
                             const nc = (!isSkip && val) ? nendoColor(val) : null;
+                            // 当時のカリキュラムに無かった項目は、未記入ではなく「対象外」
+                            if (oos && !val) return (
+                              <td key={c.id} style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center', background:'#F7F5F1' }}>
+                                <span title={s.cohort + 'は当時のカリキュラムに無い項目です'}
+                                  style={{ fontSize:'10px', color:'#B0A99A', fontWeight:700 }}>対象外</span>
+                              </td>
+                            );
                             return (
                               <td key={c.id} style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center' }}>
                                 {canEdit ? (
@@ -842,11 +860,21 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               }
 
               // 項目ごとのコホートデータを計算
+              // グループは小項目のどれかが対象外なら、その期ごと対象外にする
+              function excludedFor(key, isGroup) {
+                if (!isGroup) return excludedCohorts(key);
+                const out = new Set();
+                (groups[key] || []).forEach(c => excludedCohorts(c.id).forEach(x => out.add(x)));
+                return [...out];
+              }
+
               function getCohortData(key, isGroup, itemObj) {
                 const result = {};
+                const skip = excludedFor(key, isGroup);
                 data.staff.forEach(s => {
                   if (!s.joinDate) return;
                   if (!includeRetired && s.retired) return;
+                  if (skip.indexOf(s.cohort) >= 0) return;
                   const val = isGroup
                     ? getGroupDate(s.id, key)
                     : (data.records[s.id] || {})[key];
@@ -867,12 +895,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                   const groupFirstItem = groups[o.prefix]?.[0];
                   const cohortData = getCohortData(o.prefix, true, groupFirstItem);
                   if (Object.keys(cohortData).length > 0) {
-                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix], category: groups[o.prefix]?.[0]?.category });
+                    items.push({ key: `group:${o.prefix}`, label: o.prefix, isGroup: true, cohortData, subItems: groups[o.prefix], category: groups[o.prefix]?.[0]?.category, excluded: excludedFor(o.prefix, true) });
                   }
                 } else if (o.type === 'single') {
                   const cohortData = getCohortData(o.curr.id, false, o.curr);
                   if (Object.keys(cohortData).length > 0) {
-                    items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData, category: o.curr.category });
+                    items.push({ key: o.curr.id, label: o.curr.name, isGroup: false, cohortData, category: o.curr.category, excluded: excludedCohorts(o.curr.id) });
                   }
                 }
               });
@@ -881,7 +909,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               return (
                 <>
                   <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
-                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。本人が入れた日付（申）も集計に含めている。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
+                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。学年によってカリキュラムが違う項目は「◯◯は対象外」と表示し、その期を集計から外している。本人が入れた日付（申）は集計に含めている。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
                   </div>
                   <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
                     {['all', ...CURR_CATEGORIES].map(cat => (
@@ -923,6 +951,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                             <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                               {item.isGroup && <span style={{ fontSize:'9px', padding:'1px 6px', borderRadius:'999px', background:'#EEF2FF', color:'#4361EE', fontWeight:700 }}>大項目</span>}
                               <span style={{ fontSize:'13px', fontWeight:700, color:'#1F1C18' }}>{item.label}</span>
+                              {item.excluded && item.excluded.length > 0 && (
+                                <span title="当時のカリキュラムに無かったため、この期は集計から除いています"
+                                  style={{ fontSize:'9.5px', padding:'1px 7px', borderRadius:'999px', background:'#F7EFE0', color:'#8A6B2F', fontWeight:700, border:'1px solid #DCCFA8' }}>
+                                  {item.excluded.map(x => x.replace('年入社','')).join('・')}は対象外
+                                </span>
+                              )}
                             </div>
                             <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
                               {Object.entries(item.cohortData).sort((a,b) => a[0].localeCompare(b[0])).map(([cohort, entries]) => {

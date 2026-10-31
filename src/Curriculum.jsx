@@ -245,7 +245,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     update(d => {
       const rec = { ...(d.records[staffId] || {}) };
       const src = { ...((d.sources || {})[staffId] || {}) };
-      writes.forEach(w => { rec[w.currId] = w.date; src[w.currId] = w.source || 'memory'; });
+      writes.forEach(w => { rec[w.currId] = w.date; src[w.currId] = w.source || 'self'; });
       return { ...d, records: { ...d.records, [staffId]: rec }, sources: { ...(d.sources || {}), [staffId]: src } };
     });
   }

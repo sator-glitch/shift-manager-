@@ -59,15 +59,15 @@ export default function BackfillApp() {
     })();
   }, []);
 
-  function setKind(id, kind) {
-    setAnswers(prev => {
-      const cur = prev[id] || {};
-      return { ...prev, [id]: { ...cur, kind } };
-    });
+  function setDate(id, v) {
+    setAnswers(prev => ({ ...prev, [id]: v ? { kind: 'passed', date: v } : {} }));
     setDone(false);
   }
-  function setField(id, field, v) {
-    setAnswers(prev => ({ ...prev, [id]: { ...(prev[id] || {}), kind: 'passed', [field]: v || null } }));
+  function toggleNotYet(id) {
+    setAnswers(prev => {
+      const cur = prev[id] || {};
+      return { ...prev, [id]: cur.kind === 'notyet' ? {} : { kind: 'notyet' } };
+    });
     setDone(false);
   }
 
@@ -75,9 +75,7 @@ export default function BackfillApp() {
   const holes = items.filter(it => !it.date);
   const remaining = holes.filter(it => {
     const a = answers[it.id];
-    if (!a || !a.kind) return true;
-    if (a.kind === 'passed') return !a.date || !a.certainty;
-    return false;
+    return !a || (a.kind !== 'notyet' && !a.date);
   });
 
   // 未記入の行に、前後で記録がある項目を添える（ノートを探す手がかり）
@@ -134,23 +132,19 @@ export default function BackfillApp() {
       <div style={{ fontSize: '12px', color: SUB, marginTop: '10px', background: '#FFFDF7', border: '1px solid ' + LINE, borderRadius: '8px', padding: '10px 12px', lineHeight: 1.7 }}>
         <strong style={{ color: INK }}>自分のノートやメモを見ながら書いてください。</strong>
         前後の記録を一緒に出してあるので、その間のページを探せば見つかります。
-        メモが見つからないときは、日付を入れたうえで「うろ覚え」を選んでください。
+        まだ受けていない項目は、下のボタンを押してください。
       </div>
 
       {/* 未記入だけを先頭に出す */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
         {holeRows.map(({ it, prev, next }) => {
           const a = answers[it.id] || {};
-          const answered = a.kind === 'notyet' || (a.kind === 'passed' && a.date && a.certainty);
+          const notYet = a.kind === 'notyet';
+          const answered = notYet || !!a.date;
           return (
             <div key={it.id} style={{ background: '#FFFFFF', border: '2px solid ' + (answered ? '#BFD3C4' : '#D8C9A8'), borderRadius: '12px', padding: '13px 14px' }}>
               <div style={{ fontSize: '10.5px', color: '#B0A99A', fontWeight: 700 }}>{it.category || ''}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: INK, flex: '1 1 auto' }}>{it.name}</span>
-                {answered
-                  ? <span style={{ fontSize: '10px', fontWeight: 800, color: '#3A5C46', background: '#E8F1EA', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>入力済</span>
-                  : <span style={{ fontSize: '10px', fontWeight: 800, color: '#8A6B2F', background: '#FBF2DF', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>未記入</span>}
-              </div>
+              <div style={{ fontSize: '15px', fontWeight: 800, color: INK, marginTop: '2px' }}>{it.name}</div>
 
               {(prev || next) && (
                 <div style={{ fontSize: '11px', color: '#9C9486', marginTop: '8px', background: '#F7F5EF', borderRadius: '7px', padding: '7px 9px', lineHeight: 1.65 }}>
@@ -160,23 +154,20 @@ export default function BackfillApp() {
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '6px', marginTop: '11px' }}>
-                <Pick label="合格した" active={a.kind === 'passed'} onClick={() => setKind(it.id, 'passed')} />
-                <Pick label="まだ受けていない" active={a.kind === 'notyet'} onClick={() => setKind(it.id, 'notyet')} />
-              </div>
-              {a.kind === 'passed' && (
-                <div style={{ marginTop: '11px' }}>
-                  <div style={{ fontSize: '11.5px', color: SUB, marginBottom: '6px' }}>合格した日</div>
-                  <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01"
-                    onChange={e => setField(it.id, 'date', e.target.value)}
-                    style={{ width: '100%', fontSize: '15px', padding: '10px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK, boxSizing: 'border-box' }} />
-                  <div style={{ fontSize: '11.5px', color: SUB, margin: '10px 0 6px' }}>この日付はどこから？</div>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <Pick label="メモに書いてある" active={a.certainty === 'note'} onClick={() => setField(it.id, 'certainty', 'note')} />
-                    <Pick label="うろ覚え" active={a.certainty === 'memory'} onClick={() => setField(it.id, 'certainty', 'memory')} />
-                  </div>
-                </div>
-              )}
+              <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01" disabled={notYet}
+                onChange={e => setDate(it.id, e.target.value)}
+                style={{ width: '100%', fontSize: '16px', padding: '11px', borderRadius: '8px', marginTop: '11px',
+                  border: '1px solid ' + LINE, background: notYet ? '#F0EDE6' : BG, fontFamily: 'inherit',
+                  color: notYet ? '#C2BBA9' : INK, boxSizing: 'border-box' }} />
+
+              <button onClick={() => toggleNotYet(it.id)}
+                style={{ marginTop: '8px', fontSize: '12px', fontWeight: notYet ? 800 : 500,
+                  padding: '8px 12px', borderRadius: '8px', width: '100%',
+                  border: notYet ? '1px solid ' + INK : '1px solid ' + LINE,
+                  background: notYet ? INK : '#FFFFFF', color: notYet ? '#FAF8F4' : SUB,
+                  cursor: 'pointer', fontFamily: 'inherit' }}>
+                まだ受けていない
+              </button>
             </div>
           );
         })}

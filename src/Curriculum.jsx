@@ -227,8 +227,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }
 
   // ── 本人申告セル（記憶ベースの日付）。合格扱いにはするが日数計算には使わない
-  // 'note'   … 本人のノートに書いてあった日付。学年比較にも使う
-  // 'memory' … うろ覚えの日付。合格扱いにはするが日数計算には使わない
+  // 'self' … 本人がノートを見て入れた日付。学年比較にも使うが、見分けられるよう印を残す
   function sourceOf(staffId, currId) {
     return ((data.sources || {})[staffId] || {})[currId] || null;
   }
@@ -518,8 +517,6 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // 学年比較：起算日から合格日までの日数。item未指定（グループ集計時）はカテゴリスタート日 or 入社日を使う
   function calcDays(staff, dateStr, item) {
     if (!dateStr || dateStr === '◎') return null;
-    // うろ覚えの申告は日数に使わない（◎と同じ扱い）。メモ由来の日付は使う
-    if (item && sourceOf(staff.id, item.id) === 'memory') return null;
     let base;
     if (item) {
       base = getItemStartDate(staff, item);
@@ -822,13 +819,12 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                                     </div>
                                     <div style={{ display:'flex', gap:'3px', alignItems:'center' }}>
                                       {val && !isSkip && nc && <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background: nc.text, color:'#FFFFFF', fontWeight:700 }}>{nc.label}</span>}
-                                      {src === 'note' && <span title="本人のノートから（学年比較にも使います）" style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background:'#EDF1EC', color:'#3A5C46', fontWeight:800, border:'1px solid #CBD9CF' }}>メモ</span>}
-                                      {src === 'memory' && <span title="うろ覚えの申告（学年比較の日数には使いません）" style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background:'#F7EFE0', color:'#8A6B2F', fontWeight:800, border:'1px solid #DCCFA8' }}>うろ</span>}
+                                      {src && <span title="本人が入れた日付" style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background:'#EDF1EC', color:'#3A5C46', fontWeight:800, border:'1px solid #CBD9CF' }}>申</span>}
                                     </div>
                                   </div>
                                 ) : (
                                   isSkip ? <span style={{ fontSize:'13px', padding:'3px 8px', borderRadius:'6px', background:'#FFF8DC', color:'#7B5800', fontWeight:800 }}>◎</span>
-                                  : (val && nc) ? <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700, opacity: src === 'memory' ? 0.65 : 1 }}>{fmtDate(val)}{src === 'note' ? '（メモ）' : src === 'memory' ? '（うろ）' : ''}</span>
+                                  : (val && nc) ? <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700 }}>{fmtDate(val)}{src ? '（申）' : ''}</span>
                                   : <span style={{ fontSize:'12px', color:'#D0CCC4' }}>―</span>
                                 )}
                               </td>
@@ -862,7 +858,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               function getGroupDate(staffId, prefix) {
                 const items = groups[prefix] || [];
                 const records = data.records[staffId] || {};
-                const vals = items.map(item => (sourceOf(staffId, item.id) === 'memory' ? '◎' : records[item.id]));
+                const vals = items.map(item => records[item.id]);
                 const allFilled = vals.length > 0 && vals.every(v => !!v);
                 if (!allFilled) return undefined;
                 const dateVals = vals.filter(v => v !== '◎');
@@ -910,7 +906,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               return (
                 <>
                   <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
-                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。本人がノートから書いた日付（メモ）は集計に含める。うろ覚えの申告（うろ）は◎と同じく日数計算から除外。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
+                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。本人が入れた日付（申）も集計に含めている。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
                   </div>
                   <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
                     {['all', ...CURR_CATEGORIES].map(cat => (

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, Upload, AlertCircle, CheckCircle, Users, BookOpen, BarChart2, ChevronDown, ChevronRight } from 'lucide-react';
-import BackfillAdmin from './BackfillAdmin.jsx';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY     = 'curriculum_v2';
@@ -230,24 +229,6 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // 'self' … 本人がノートを見て入れた日付。学年比較にも使うが、見分けられるよう印を残す
   function sourceOf(staffId, currId) {
     return ((data.sources || {})[staffId] || {})[currId] || null;
-  }
-
-  const backfillBackedUp = useRef(false);
-  async function applyBackfill(staffId, writes) {
-    if (!writes || !writes.length) return;
-    if (!backfillBackedUp.current) {
-      backfillBackedUp.current = true;
-      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const key = DATA_KEY + '_backup_backfill_' + stamp;
-      try { await window.storage.get(key); }
-      catch (e) { try { await window.storage.set(key, JSON.stringify(data)); } catch (e2) {} }
-    }
-    update(d => {
-      const rec = { ...(d.records[staffId] || {}) };
-      const src = { ...((d.sources || {})[staffId] || {}) };
-      writes.forEach(w => { rec[w.currId] = w.date; src[w.currId] = w.source || 'self'; });
-      return { ...d, records: { ...d.records, [staffId]: rec }, sources: { ...(d.sources || {}), [staffId]: src } };
-    });
   }
 
   // ── 認証
@@ -613,7 +594,6 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               { key:'compare', label:'学年比較', icon:<BarChart2 size={13}/> },
               { key:'staff', label:'スタッフ', icon:<Users size={13}/> },
               { key:'curriculum', label:'カリキュラム', icon:<BookOpen size={13}/> },
-              ...(isMaster ? [{ key:'backfill', label:'未記入の確認', icon:<AlertCircle size={13}/> }] : []),
             ].map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 style={{ display:'flex', alignItems:'center', gap:'5px', padding:'10px 14px', border:'none', borderBottom: tab===t.key ? '2px solid #2B2823' : '2px solid transparent', background:'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer' }}>
@@ -658,7 +638,6 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                 { key:'compare', label:'学年比較' },
                 { key:'staff', label:'スタッフ' },
                 { key:'curriculum', label:'カリキュラム' },
-                ...(isMaster ? [{ key:'backfill', label:'未記入の確認' }] : []),
               ].map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   style={{ padding:'8px 14px', borderRadius:'8px', border:'none', background: tab===t.key ? '#FFFFFF' : 'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer', boxShadow: tab===t.key ? '0 1px 4px rgba(43,40,35,0.08)' : 'none' }}>
@@ -842,10 +821,6 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
         )}
 
         {/* ── 学年比較 */}
-        {tab === 'backfill' && isMaster && (
-          <BackfillAdmin data={data} onApply={applyBackfill} />
-        )}
-
         {tab === 'compare' && (
           <div>
             {!canViewAvg ? (

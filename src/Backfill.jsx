@@ -154,8 +154,9 @@ export default function BackfillApp() {
 
               {(prev || next) && (
                 <div style={{ fontSize: '11px', color: '#9C9486', marginTop: '8px', background: '#F7F5EF', borderRadius: '7px', padding: '7px 9px', lineHeight: 1.65 }}>
-                  {prev && <div>ひとつ前の記録　{prev.name}　{prev.date.replace(/-/g, '/')}</div>}
-                  {next && <div>次の記録　　　　{next.name}　{next.date.replace(/-/g, '/')}</div>}
+                  <div style={{ fontWeight: 700, color: '#8A8378', marginBottom: '2px' }}>前後の項目の記録</div>
+                  {prev && <div>{prev.name}　{prev.date.replace(/-/g, '/')}</div>}
+                  {next && <div>{next.name}　{next.date.replace(/-/g, '/')}</div>}
                 </div>
               )}
 

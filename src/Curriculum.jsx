@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, Upload, AlertCircle, CheckCircle, Users, BookOpen, BarChart2, ChevronDown, ChevronRight } from 'lucide-react';
+import BackfillAdmin from './BackfillAdmin.jsx';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY     = 'curriculum_v2';
@@ -223,6 +224,29 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }, []);
   function update(fn) {
     setData(prev => { const next = fn(prev); persist(next); return next; });
+  }
+
+  // ── 本人申告セル（記憶ベースの日付）。合格扱いにはするが日数計算には使わない
+  function isSelfReported(staffId, currId) {
+    return ((data.sources || {})[staffId] || {})[currId] === 'self';
+  }
+
+  const backfillBackedUp = useRef(false);
+  async function applyBackfill(staffId, writes) {
+    if (!writes || !writes.length) return;
+    if (!backfillBackedUp.current) {
+      backfillBackedUp.current = true;
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const key = DATA_KEY + '_backup_backfill_' + stamp;
+      try { await window.storage.get(key); }
+      catch (e) { try { await window.storage.set(key, JSON.stringify(data)); } catch (e2) {} }
+    }
+    update(d => {
+      const rec = { ...(d.records[staffId] || {}) };
+      const src = { ...((d.sources || {})[staffId] || {}) };
+      writes.forEach(w => { rec[w.currId] = w.date; src[w.currId] = 'self'; });
+      return { ...d, records: { ...d.records, [staffId]: rec }, sources: { ...(d.sources || {}), [staffId]: src } };
+    });
   }
 
   // ── 認証
@@ -492,6 +516,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   // 学年比較：起算日から合格日までの日数。item未指定（グループ集計時）はカテゴリスタート日 or 入社日を使う
   function calcDays(staff, dateStr, item) {
     if (!dateStr || dateStr === '◎') return null;
+    // 本人申告は記憶ベースなので日数には使わない（◎と同じ扱い）
+    if (item && isSelfReported(staff.id, item.id)) return null;
     let base;
     if (item) {
       base = getItemStartDate(staff, item);
@@ -588,6 +614,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               { key:'compare', label:'学年比較', icon:<BarChart2 size={13}/> },
               { key:'staff', label:'スタッフ', icon:<Users size={13}/> },
               { key:'curriculum', label:'カリキュラム', icon:<BookOpen size={13}/> },
+              ...(isMaster ? [{ key:'backfill', label:'未記入の確認', icon:<AlertCircle size={13}/> }] : []),
             ].map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 style={{ display:'flex', alignItems:'center', gap:'5px', padding:'10px 14px', border:'none', borderBottom: tab===t.key ? '2px solid #2B2823' : '2px solid transparent', background:'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer' }}>
@@ -632,6 +659,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                 { key:'compare', label:'学年比較' },
                 { key:'staff', label:'スタッフ' },
                 { key:'curriculum', label:'カリキュラム' },
+                ...(isMaster ? [{ key:'backfill', label:'未記入の確認' }] : []),
               ].map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   style={{ padding:'8px 14px', borderRadius:'8px', border:'none', background: tab===t.key ? '#FFFFFF' : 'transparent', fontSize:'12px', fontWeight: tab===t.key ? 700 : 500, color: tab===t.key ? '#2B2823' : '#9C9486', cursor:'pointer', boxShadow: tab===t.key ? '0 1px 4px rgba(43,40,35,0.08)' : 'none' }}>
@@ -773,6 +801,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                           {displayedCurricula.map(c => {
                             const val = rec[c.id];
                             const isSkip = val === '◎';
+                            const isSelf = isSelfReported(s.id, c.id);
                             const nc = (!isSkip && val) ? nendoColor(val) : null;
                             return (
                               <td key={c.id} style={{ padding:'6px 8px', borderBottom:'1px solid #F0EDE6', textAlign:'center' }}>
@@ -789,11 +818,14 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
                                       <button onClick={() => setRecord(s.id, c.id, isSkip ? undefined : '◎')} title="飛び級合格"
                                         style={{ fontSize:'12px', padding:'3px 7px', borderRadius:'6px', border: isSkip ? '1px solid #B8860B' : '1px solid #E2DCCC', background: isSkip ? '#FFD700' : '#FFFFFF', color: isSkip ? '#7B5800' : '#B0A99A', cursor:'pointer', fontWeight: isSkip ? 800 : 400 }}>◎</button>
                                     </div>
-                                    {val && !isSkip && nc && <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background: nc.text, color:'#FFFFFF', fontWeight:700 }}>{nc.label}</span>}
+                                    <div style={{ display:'flex', gap:'3px', alignItems:'center' }}>
+                                      {val && !isSkip && nc && <span style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background: nc.text, color:'#FFFFFF', fontWeight:700 }}>{nc.label}</span>}
+                                      {isSelf && <span title="本人申告（学年比較の日数には使いません）" style={{ fontSize:'9px', padding:'1px 5px', borderRadius:'999px', background:'#EFEAE0', color:'#8A6B2F', fontWeight:800, border:'1px solid #DCCFA8' }}>申</span>}
+                                    </div>
                                   </div>
                                 ) : (
                                   isSkip ? <span style={{ fontSize:'13px', padding:'3px 8px', borderRadius:'6px', background:'#FFF8DC', color:'#7B5800', fontWeight:800 }}>◎</span>
-                                  : (val && nc) ? <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700 }}>{fmtDate(val)}</span>
+                                  : (val && nc) ? <span style={{ fontSize:'11px', padding:'3px 8px', borderRadius:'6px', background: nc.bg, color: nc.text, fontWeight:700, opacity: isSelf ? 0.65 : 1 }}>{fmtDate(val)}{isSelf ? '（申）' : ''}</span>
                                   : <span style={{ fontSize:'12px', color:'#D0CCC4' }}>―</span>
                                 )}
                               </td>
@@ -811,6 +843,10 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
         )}
 
         {/* ── 学年比較 */}
+        {tab === 'backfill' && isMaster && (
+          <BackfillAdmin data={data} onApply={applyBackfill} />
+        )}
+
         {tab === 'compare' && (
           <div>
             {!canViewAvg ? (
@@ -823,7 +859,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               function getGroupDate(staffId, prefix) {
                 const items = groups[prefix] || [];
                 const records = data.records[staffId] || {};
-                const vals = items.map(item => records[item.id]);
+                const vals = items.map(item => (isSelfReported(staffId, item.id) ? '◎' : records[item.id]));
                 const allFilled = vals.length > 0 && vals.every(v => !!v);
                 if (!allFilled) return undefined;
                 const dateVals = vals.filter(v => v !== '◎');
@@ -871,7 +907,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
               return (
                 <>
                   <div style={{ fontSize:'12px', color:'#9C9486', marginBottom:'12px' }}>
-                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
+                    入社日から合格日までの日数で比較。入社日未登録・未合格のスタッフは除外。本人申告（申）の日付は記憶ベースなので、◎と同じく日数計算から除外。連番や括弧付きの小項目を持つ項目（デンマン人頭1〜4、ブリーチ人頭（リタッチ1）等）は大項目として扱い、全小項目が埋まった時点の最新合格日で集計。
                   </div>
                   <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'12px' }}>
                     {['all', ...CURR_CATEGORIES].map(cat => (

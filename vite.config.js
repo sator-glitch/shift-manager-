@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         curriculum: resolve(__dirname, 'curriculum.html'),
+        backfill: resolve(__dirname, 'backfill.html'),
       },
     },
   },

@@ -24,7 +24,35 @@ function Pick({ label, active, onClick }) {
   );
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const NOW = new Date();
+const NOW_Y = NOW.getFullYear(), NOW_M = NOW.getMonth() + 1, NOW_D = NOW.getDate();
+const FIRST_YEAR = 2023;
+const pad2 = n => String(n).padStart(2, '0');
+const daysIn = (y, m) => (y && m ? new Date(y, m, 0).getDate() : 31);
+
+// 今日より後は選べないようにする
+function yearOpts() {
+  const out = [];
+  for (let y = FIRST_YEAR; y <= NOW_Y; y++) out.push(y);
+  return out;
+}
+function monthOpts(y) {
+  const max = (Number(y) === NOW_Y) ? NOW_M : 12;
+  const out = [];
+  for (let m = 1; m <= max; m++) out.push(m);
+  return out;
+}
+function dayOpts(y, m) {
+  const max = (Number(y) === NOW_Y && Number(m) === NOW_M) ? NOW_D : daysIn(Number(y), Number(m));
+  const out = [];
+  for (let d = 1; d <= max; d++) out.push(d);
+  return out;
+}
+
+const selStyle = {
+  flex: '1 1 0', minWidth: 0, fontSize: '16px', padding: '11px 8px', borderRadius: '8px',
+  border: '1px solid #E2DCCC', background: '#FAF8F4', fontFamily: 'inherit', color: '#2B2823',
+};
 
 export default function BackfillApp() {
   const [staffId, setStaffId] = useState('');
@@ -59,8 +87,22 @@ export default function BackfillApp() {
     })();
   }, []);
 
-  function setDate(id, v) {
-    setAnswers(prev => ({ ...prev, [id]: v ? { kind: 'passed', date: v } : {} }));
+  function setPart(id, part, raw) {
+    const v = raw ? Number(raw) : null;
+    setAnswers(prev => {
+      const cur = { ...(prev[id] || {}) };
+      delete cur.date;
+      cur.kind = 'passed';
+      cur[part] = v;
+      if (part === 'y' || part === 'm') {
+        // 月末や今日を超えた日が残らないようにする
+        const max = dayOpts(cur.y, cur.m).length;
+        if (cur.d && cur.d > max) cur.d = null;
+        if (part === 'y' && cur.m && monthOpts(cur.y).indexOf(cur.m) < 0) { cur.m = null; cur.d = null; }
+      }
+      if (cur.y && cur.m && cur.d) cur.date = cur.y + '-' + pad2(cur.m) + '-' + pad2(cur.d);
+      return { ...prev, [id]: cur };
+    });
     setDone(false);
   }
   function toggleNotYet(id) {
@@ -154,11 +196,23 @@ export default function BackfillApp() {
                 </div>
               )}
 
-              <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01" disabled={notYet}
-                onChange={e => setDate(it.id, e.target.value)}
-                style={{ width: '100%', fontSize: '16px', padding: '11px', borderRadius: '8px', marginTop: '11px',
-                  border: '1px solid ' + LINE, background: notYet ? '#F0EDE6' : BG, fontFamily: 'inherit',
-                  color: notYet ? '#C2BBA9' : INK, boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: '6px', marginTop: '11px' }}>
+                <select value={a.y || ''} disabled={notYet} onChange={e => setPart(it.id, 'y', e.target.value)}
+                  style={{ ...selStyle, background: notYet ? '#F0EDE6' : BG, color: notYet ? '#C2BBA9' : INK }}>
+                  <option value="">年</option>
+                  {yearOpts().map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <select value={a.m || ''} disabled={notYet} onChange={e => setPart(it.id, 'm', e.target.value)}
+                  style={{ ...selStyle, background: notYet ? '#F0EDE6' : BG, color: notYet ? '#C2BBA9' : INK }}>
+                  <option value="">月</option>
+                  {monthOpts(a.y).map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <select value={a.d || ''} disabled={notYet || !a.y || !a.m} onChange={e => setPart(it.id, 'd', e.target.value)}
+                  style={{ ...selStyle, background: (notYet || !a.y || !a.m) ? '#F0EDE6' : BG, color: (notYet || !a.y || !a.m) ? '#C2BBA9' : INK }}>
+                  <option value="">日</option>
+                  {dayOpts(a.y, a.m).map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
 
               <button onClick={() => toggleNotYet(it.id)}
                 style={{ marginTop: '8px', fontSize: '12px', fontWeight: notYet ? 800 : 500,

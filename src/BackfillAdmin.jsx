@@ -108,6 +108,12 @@ export default function BackfillAdmin({ data, onApply }) {
   }
 
   const submitted = targets.filter(t => answers[t.staff.id]);
+  const pending = targets.filter(t => !answers[t.staff.id]);
+
+  function copyNames() {
+    const txt = pending.map(t => t.staff.name).join('\n');
+    try { navigator.clipboard.writeText(txt); setCopied('__names__'); setTimeout(() => setCopied(''), 1500); } catch (e) {}
+  }
 
   return (
     <div>
@@ -115,6 +121,19 @@ export default function BackfillAdmin({ data, onApply }) {
         到達点より手前にある未記入は、現在 <strong style={{ color: INK }}>{totalHoles}件 / {targets.length}名</strong>。
         本人にリンクを送り、<strong style={{ color: INK }}>自分のノートを見ながら合格日</strong>を書いてもらって、ここで承認するとカリキュラムに入ります。
         本人が入れた日付はそのまま学年比較にも使いますが、マトリクスに「申」バッジが付くので後から見分けられます。
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+        {[
+          { label: '対象', n: targets.length, color: INK, bg: '#F3F1EC' },
+          { label: '回答が届いた', n: submitted.length, color: '#2B4A3A', bg: '#E8F1EA' },
+          { label: 'まだ回答がない', n: pending.length, color: '#8A6B2F', bg: '#FBF2DF' },
+        ].map(x => (
+          <div key={x.label} style={{ background: x.bg, borderRadius: '10px', padding: '9px 14px', minWidth: '96px' }}>
+            <div style={{ fontSize: '10.5px', color: SUB, fontWeight: 700 }}>{x.label}</div>
+            <div style={{ fontSize: '19px', fontWeight: 800, color: x.color, lineHeight: 1.3 }}>{x.n}<span style={{ fontSize: '11px', fontWeight: 700, marginLeft: '2px' }}>名</span></div>
+          </div>
+        ))}
       </div>
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -172,17 +191,27 @@ export default function BackfillAdmin({ data, onApply }) {
         </div>
       )}
 
-      <div style={{ fontSize: '13px', fontWeight: 800, color: INK, marginBottom: '8px' }}>本人に送るリンク</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '13px', fontWeight: 800, color: INK }}>まだ回答がない（{pending.length}名）</span>
+        {pending.length > 0 && (
+          <button onClick={copyNames} style={btnPlain}>
+            {copied === '__names__' ? 'コピーしました' : '未回答の名前をまとめてコピー'}
+          </button>
+        )}
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {targets.map(t => (
+        {pending.length === 0 && (
+          <div style={{ fontSize: '12px', color: SUB, padding: '14px', textAlign: 'center', background: '#F5F2EB', borderRadius: '8px' }}>
+            全員から回答が届いています。
+          </div>
+        )}
+        {pending.map(t => (
           <div key={t.staff.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#FFFFFF', border: '1px solid ' + LINE, borderRadius: '8px', padding: '9px 11px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '13px', fontWeight: 700, color: INK }}>{t.staff.name}</span>
             <span style={{ fontSize: '10.5px', color: SUB }}>{t.holes.length}項目</span>
-            {answers[t.staff.id]
-              ? <span style={{ fontSize: '10px', fontWeight: 700, color: '#2B4A3A', background: '#E8F1EA', padding: '2px 7px', borderRadius: '999px' }}>回答済</span>
-              : asked[t.staff.id]
-                ? <span style={{ fontSize: '10px', fontWeight: 700, color: '#8A8378', background: '#F3F1EC', padding: '2px 7px', borderRadius: '999px' }}>依頼済</span>
-                : <span style={{ fontSize: '10px', color: '#B0A99A' }}>未依頼</span>}
+            {asked[t.staff.id]
+              ? <span style={{ fontSize: '10px', fontWeight: 700, color: '#8A6B2F', background: '#FBF2DF', padding: '2px 7px', borderRadius: '999px' }}>依頼済・未回答</span>
+              : <span style={{ fontSize: '10px', fontWeight: 700, color: '#B0A99A', background: '#F3F1EC', padding: '2px 7px', borderRadius: '999px' }}>未依頼</span>}
             <button onClick={() => copy(t.staff.id)} style={{ ...btnPlain, marginLeft: 'auto' }}>
               {copied === t.staff.id ? 'コピーしました' : 'リンクをコピー'}
             </button>

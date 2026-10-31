@@ -71,11 +71,21 @@ export default function BackfillApp() {
   }
 
   const items = (ask && ask.items) || [];
-  const remaining = items.filter(it => {
+  const holes = items.filter(it => !it.date);
+  const remaining = holes.filter(it => {
     const a = answers[it.id];
     if (!a || !a.kind) return true;
     if (a.kind === 'passed') return !a.date || !a.certainty;
     return false;
+  });
+
+  // カテゴリごとにまとめる（並びはカリキュラムのまま）
+  const groups = [];
+  items.forEach(it => {
+    const cat = it.category || 'その他';
+    let g = groups.find(x => x.cat === cat);
+    if (!g) { g = { cat, rows: [] }; groups.push(g); }
+    g.rows.push(it);
   });
 
   async function submit() {
@@ -106,42 +116,62 @@ export default function BackfillApp() {
       <div style={{ fontSize: '19px', fontWeight: 800, color: '#1F1C18' }}>合格した時期の確認</div>
       <div style={{ fontSize: '13px', color: SUB, marginTop: '6px', lineHeight: 1.7 }}>
         {ask.name} さん<br />
-        カリキュラムの記録が抜けている項目があります。下の{items.length}項目について、
-        <strong style={{ color: INK }}>合格した日</strong>を教えてください。
+        カリキュラムの記録が抜けている項目が<strong style={{ color: INK }}>{holes.length}件</strong>あります。
+        色が付いている行だけ、<strong style={{ color: INK }}>合格した日</strong>を入れてください。
       </div>
       <div style={{ fontSize: '12px', color: SUB, marginTop: '10px', background: '#FFFDF7', border: '1px solid ' + LINE, borderRadius: '8px', padding: '10px 12px', lineHeight: 1.7 }}>
         <strong style={{ color: INK }}>自分のノートやメモを見ながら書いてください。</strong>
-        記録が見つからないものは「覚えていない」で構いません。うろ覚えの日付を無理に書くより、そのほうが助かります。
+        すでに入っている日付も並べてあるので、前後の日付から探せます。
+        メモが見つからないときは、日付を入れたうえで「うろ覚え」を選んでください。
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '18px' }}>
-        {items.map(it => {
-          const a = answers[it.id] || {};
-          return (
-            <div key={it.id} style={{ background: '#FFFFFF', border: '1px solid ' + LINE, borderRadius: '12px', padding: '14px' }}>
-              <div style={{ fontSize: '10.5px', color: '#B0A99A', fontWeight: 700 }}>{it.category || ''}</div>
-              <div style={{ fontSize: '14.5px', fontWeight: 800, color: INK, marginTop: '2px' }}>{it.name}</div>
-              <div style={{ display: 'flex', gap: '6px', marginTop: '11px' }}>
-                <Pick label="合格した" active={a.kind === 'passed'} onClick={() => setKind(it.id, 'passed')} />
-                <Pick label="まだ受けていない" active={a.kind === 'notyet'} onClick={() => setKind(it.id, 'notyet')} />
-                <Pick label="覚えていない" active={a.kind === 'unknown'} onClick={() => setKind(it.id, 'unknown')} />
-              </div>
-              {a.kind === 'passed' && (
-                <div style={{ marginTop: '10px' }}>
-                  <div style={{ fontSize: '11.5px', color: SUB, marginBottom: '6px' }}>合格した日</div>
-                  <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01"
-                    onChange={e => setField(it.id, 'date', e.target.value)}
-                    style={{ width: '100%', fontSize: '15px', padding: '10px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK, boxSizing: 'border-box' }} />
-                  <div style={{ fontSize: '11.5px', color: SUB, margin: '10px 0 6px' }}>この日付はどこから？</div>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <Pick label="メモに書いてある" active={a.certainty === 'note'} onClick={() => setField(it.id, 'certainty', 'note')} />
-                    <Pick label="うろ覚え" active={a.certainty === 'memory'} onClick={() => setField(it.id, 'certainty', 'memory')} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '20px' }}>
+        {groups.map(g => (
+          <div key={g.cat}>
+            <div style={{ fontSize: '11px', fontWeight: 800, color: '#B0A99A', letterSpacing: '0.04em', marginBottom: '7px' }}>{g.cat}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {g.rows.map(it => {
+                // すでに記録がある行は読み取り専用
+                if (it.date) return (
+                  <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', borderRadius: '8px', background: '#F5F2EB', border: '1px solid #EDE8DC' }}>
+                    <span style={{ fontSize: '12.5px', color: '#9C9486', flex: '1 1 auto' }}>{it.name}</span>
+                    <span style={{ fontSize: '12px', color: '#9C9486', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {it.date === '\u25CE' ? '\u25CE 飛び級' : it.date.replace(/-/g, '/')}
+                    </span>
                   </div>
-                </div>
-              )}
+                );
+
+                const a = answers[it.id] || {};
+                const answered = a.kind === 'notyet' || (a.kind === 'passed' && a.date && a.certainty);
+                return (
+                  <div key={it.id} style={{ background: '#FFFFFF', border: '2px solid ' + (answered ? '#BFD3C4' : '#D8C9A8'), borderRadius: '12px', padding: '13px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '14.5px', fontWeight: 800, color: INK, flex: '1 1 auto' }}>{it.name}</span>
+                      {!answered && <span style={{ fontSize: '10px', fontWeight: 800, color: '#8A6B2F', background: '#FBF2DF', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>未記入</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '11px' }}>
+                      <Pick label="合格した" active={a.kind === 'passed'} onClick={() => setKind(it.id, 'passed')} />
+                      <Pick label="まだ受けていない" active={a.kind === 'notyet'} onClick={() => setKind(it.id, 'notyet')} />
+                    </div>
+                    {a.kind === 'passed' && (
+                      <div style={{ marginTop: '11px' }}>
+                        <div style={{ fontSize: '11.5px', color: SUB, marginBottom: '6px' }}>合格した日</div>
+                        <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01"
+                          onChange={e => setField(it.id, 'date', e.target.value)}
+                          style={{ width: '100%', fontSize: '15px', padding: '10px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK, boxSizing: 'border-box' }} />
+                        <div style={{ fontSize: '11.5px', color: SUB, margin: '10px 0 6px' }}>この日付はどこから？</div>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <Pick label="メモに書いてある" active={a.certainty === 'note'} onClick={() => setField(it.id, 'certainty', 'note')} />
+                          <Pick label="うろ覚え" active={a.certainty === 'memory'} onClick={() => setField(it.id, 'certainty', 'memory')} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       <div style={{ marginTop: '20px', position: 'sticky', bottom: '12px' }}>

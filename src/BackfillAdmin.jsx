@@ -10,6 +10,18 @@ export function holesOf(data, staff) {
   return data.curricula.slice(0, last).filter(c => !rec[c.id]);
 }
 
+// 到達点までの全項目を渡す。既に入っている日付は読み取り専用で見せて、
+// 前後の日付からノートを探す手がかりにしてもらう。
+export function itemsUpTo(data, staff) {
+  const rec = data.records[staff.id] || {};
+  let last = -1;
+  data.curricula.forEach((c, i) => { if (rec[c.id]) last = i; });
+  if (last < 0) return [];
+  return data.curricula.slice(0, last + 1).map(c => ({
+    id: c.id, name: c.name, category: c.category || '', date: rec[c.id] || '',
+  }));
+}
+
 const LINE = '#E2DCCC', INK = '#2B2823', SUB = '#8A8378';
 const btn = { fontSize: '11.5px', fontWeight: 700, padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit' };
 const btnDark = { ...btn, border: 'none', background: INK, color: '#FAF8F4' };
@@ -51,7 +63,7 @@ export default function BackfillAdmin({ data, onApply }) {
       try {
         await window.storage.set(ASK_PREFIX + t.staff.id, JSON.stringify({
           name: t.staff.name,
-          items: t.holes.map(c => ({ id: c.id, name: c.name, category: c.category || '' })),
+          items: itemsUpTo(data, t.staff),
           createdAt: new Date().toISOString(),
         }));
         n++;

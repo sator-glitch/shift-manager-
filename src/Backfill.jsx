@@ -3,9 +3,6 @@ import React, { useState, useEffect } from 'react';
 export const ASK_PREFIX = 'curriculum_backfill_ask_v1_';
 export const ANS_PREFIX = 'curriculum_backfill_v1_';
 
-const YEARS = [2023, 2024, 2025, 2026];
-const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
 const BG = '#FAF8F4', LINE = '#E2DCCC', INK = '#2B2823', SUB = '#8A8378';
 
 function Box({ children }) {
@@ -26,6 +23,8 @@ function Pick({ label, active, onClick }) {
     }}>{label}</button>
   );
 }
+
+const TODAY = new Date().toISOString().slice(0, 10);
 
 export default function BackfillApp() {
   const [staffId, setStaffId] = useState('');
@@ -66,8 +65,8 @@ export default function BackfillApp() {
     });
     setDone(false);
   }
-  function setYM(id, field, v) {
-    setAnswers(prev => ({ ...prev, [id]: { ...(prev[id] || {}), kind: 'passed', [field]: v ? Number(v) : null } }));
+  function setField(id, field, v) {
+    setAnswers(prev => ({ ...prev, [id]: { ...(prev[id] || {}), kind: 'passed', [field]: v || null } }));
     setDone(false);
   }
 
@@ -75,7 +74,7 @@ export default function BackfillApp() {
   const remaining = items.filter(it => {
     const a = answers[it.id];
     if (!a || !a.kind) return true;
-    if (a.kind === 'passed') return !a.year || !a.month;
+    if (a.kind === 'passed') return !a.date || !a.certainty;
     return false;
   });
 
@@ -108,11 +107,11 @@ export default function BackfillApp() {
       <div style={{ fontSize: '13px', color: SUB, marginTop: '6px', lineHeight: 1.7 }}>
         {ask.name} さん<br />
         カリキュラムの記録が抜けている項目があります。下の{items.length}項目について、
-        <strong style={{ color: INK }}>合格した時期</strong>を選んでください。日にちまでは要りません。
+        <strong style={{ color: INK }}>合格した日</strong>を教えてください。
       </div>
       <div style={{ fontSize: '12px', color: SUB, marginTop: '10px', background: '#FFFDF7', border: '1px solid ' + LINE, borderRadius: '8px', padding: '10px 12px', lineHeight: 1.7 }}>
-        正確に覚えていなくて構いません。あやふやなら「覚えていない」を選んでください。
-        思い出せないものを無理に埋めるより、そのほうが助かります。
+        <strong style={{ color: INK }}>自分のノートやメモを見ながら書いてください。</strong>
+        記録が見つからないものは「覚えていない」で構いません。うろ覚えの日付を無理に書くより、そのほうが助かります。
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '18px' }}>
@@ -128,18 +127,16 @@ export default function BackfillApp() {
                 <Pick label="覚えていない" active={a.kind === 'unknown'} onClick={() => setKind(it.id, 'unknown')} />
               </div>
               {a.kind === 'passed' && (
-                <div style={{ display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
-                  <select value={a.year || ''} onChange={e => setYM(it.id, 'year', e.target.value)}
-                    style={{ flex: 1, fontSize: '13px', padding: '9px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK }}>
-                    <option value="">年</option>
-                    {YEARS.map(y => <option key={y} value={y}>{y}年</option>)}
-                  </select>
-                  <select value={a.month || ''} onChange={e => setYM(it.id, 'month', e.target.value)}
-                    style={{ flex: 1, fontSize: '13px', padding: '9px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK }}>
-                    <option value="">月</option>
-                    {MONTHS.map(m => <option key={m} value={m}>{m}月</option>)}
-                  </select>
-                  <span style={{ fontSize: '11px', color: SUB }}>ごろ</span>
+                <div style={{ marginTop: '10px' }}>
+                  <div style={{ fontSize: '11.5px', color: SUB, marginBottom: '6px' }}>合格した日</div>
+                  <input type="date" value={a.date || ''} max={TODAY} min="2022-01-01"
+                    onChange={e => setField(it.id, 'date', e.target.value)}
+                    style={{ width: '100%', fontSize: '15px', padding: '10px', borderRadius: '8px', border: '1px solid ' + LINE, background: BG, fontFamily: 'inherit', color: INK, boxSizing: 'border-box' }} />
+                  <div style={{ fontSize: '11.5px', color: SUB, margin: '10px 0 6px' }}>この日付はどこから？</div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <Pick label="メモに書いてある" active={a.certainty === 'note'} onClick={() => setField(it.id, 'certainty', 'note')} />
+                    <Pick label="うろ覚え" active={a.certainty === 'memory'} onClick={() => setField(it.id, 'certainty', 'memory')} />
+                  </div>
                 </div>
               )}
             </div>

@@ -10,10 +10,6 @@ export function holesOf(data, staff) {
   return data.curricula.slice(0, last).filter(c => !rec[c.id]);
 }
 
-function monthDate(y, m) {
-  return y + '-' + String(m).padStart(2, '0') + '-15';
-}
-
 const LINE = '#E2DCCC', INK = '#2B2823', SUB = '#8A8378';
 const btn = { fontSize: '11.5px', fontWeight: 700, padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit' };
 const btnDark = { ...btn, border: 'none', background: INK, color: '#FAF8F4' };
@@ -80,8 +76,8 @@ export default function BackfillAdmin({ data, onApply }) {
     Object.keys(sub.answers || {}).forEach(currId => {
       const a = sub.answers[currId];
       if (rec[currId]) return; // この間に手で入った分は上書きしない
-      if (a && a.kind === 'passed' && a.year && a.month) {
-        writes.push({ currId, date: monthDate(a.year, a.month) });
+      if (a && a.kind === 'passed' && a.date) {
+        writes.push({ currId, date: a.date, source: a.certainty === 'note' ? 'note' : 'memory' });
       }
     });
     setBusy(true);
@@ -105,8 +101,9 @@ export default function BackfillAdmin({ data, onApply }) {
     <div>
       <div style={{ fontSize: '12px', color: SUB, lineHeight: 1.8, marginBottom: '14px' }}>
         到達点より手前にある未記入は、現在 <strong style={{ color: INK }}>{totalHoles}件 / {targets.length}名</strong>。
-        本人にリンクを送って合格した時期（年月）を答えてもらい、ここで承認するとカリキュラムに入ります。
-        本人申告は<strong style={{ color: INK }}>学年比較の日数計算から除外</strong>されます（◎と同じ扱い）。
+        本人にリンクを送り、<strong style={{ color: INK }}>自分のノートを見ながら合格日</strong>を書いてもらって、ここで承認するとカリキュラムに入ります。
+        メモに書いてあった日付はそのまま学年比較に使います。
+        <strong style={{ color: INK }}>「うろ覚え」と答えられた日付だけ</strong>、学年比較の日数計算から除外されます（◎と同じ扱い）。
       </div>
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -124,7 +121,7 @@ export default function BackfillAdmin({ data, onApply }) {
             {submitted.map(t => {
               const sub = answers[t.staff.id];
               const rows = t.holes.map(c => ({ c, a: (sub.answers || {})[c.id] || {} }));
-              const passed = rows.filter(r => r.a.kind === 'passed' && r.a.year && r.a.month);
+              const passed = rows.filter(r => r.a.kind === 'passed' && r.a.date);
               return (
                 <div key={t.staff.id} style={{ background: '#FFFDF7', border: '1px solid ' + LINE, borderRadius: '10px', padding: '13px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -145,7 +142,7 @@ export default function BackfillAdmin({ data, onApply }) {
                           color: r.a.kind === 'passed' ? '#2B4A3A' : r.a.kind === 'notyet' ? SUB : '#A9742A',
                         }}>
                           {r.a.kind === 'passed'
-                            ? (r.a.year && r.a.month ? r.a.year + '年' + r.a.month + '月ごろ' : '年月未入力')
+                            ? (r.a.date ? r.a.date.replace(/-/g, '/') + (r.a.certainty === 'note' ? '（メモ）' : 'ごろ（うろ覚え）') : '日付未入力')
                             : r.a.kind === 'notyet' ? 'まだ受けていない'
                             : r.a.kind === 'unknown' ? '覚えていない' : '未回答'}
                         </span>

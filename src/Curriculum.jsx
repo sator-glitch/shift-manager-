@@ -225,7 +225,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
     setData(prev => { const next = fn(prev); persist(next); return next; });
   }
 
-  // ── 本人申告セル（記憶ベースの日付）。合格扱いにはするが日数計算には使わない
+  // ── 本人が入れた日付の印（sources）。学年比較にも使うが見分けられるようにしておく
   // 'self' … 本人がノートを見て入れた日付。学年比較にも使うが、見分けられるよう印を残す
   function sourceOf(staffId, currId) {
     return ((data.sources || {})[staffId] || {})[currId] || null;

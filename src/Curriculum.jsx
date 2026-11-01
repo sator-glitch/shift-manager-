@@ -125,6 +125,7 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
 
   // データ
   const [data, setData]       = useState(INIT_DATA);
+  const baseRef = useRef(null); // 最後にサーバーと一致していた内容（保存時の3方向マージの基準）
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
 
@@ -192,8 +193,8 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
           if (!parsed.staff || parsed.staff.length === 0) {
             const seeded = { ...parsed, staff: SEED_STAFF };
             await window.storage.set(DATA_KEY, JSON.stringify(seeded));
-            setData(seeded);
-          } else { setData(parsed); }
+            baseRef.current = seeded; setData(seeded);
+          } else { baseRef.current = parsed; setData(parsed); }
         } else {
           const init = { ...INIT_DATA, staff: SEED_STAFF };
           await window.storage.set(DATA_KEY, JSON.stringify(init));
@@ -216,9 +217,66 @@ export default function CurriculumApp({ embedded = false, embeddedCanEdit = true
   }, []);
 
   // ── 保存
+  // curriculum_v2 は JSON 文字列1本なので、画面に読み込んだ内容をそのまま書き戻すと、
+  // 読み込んでから保存するまでの間に他から入った書き込み（シフトStep5の合否など）を
+  // 丸ごと消してしまう。そこで保存直前にサーバーを読み直し、
+  // 「この画面で変えた分だけ」を最新の内容に重ねる。
+  // 2階層のマップ（records / sources / categoryStartDates）の差分を remote に適用する
+  function applyMapDiff(remote, base, next, key) {
+    const b = (base || {})[key] || {}, n = (next || {})[key] || {};
+    const out = { ...((remote || {})[key] || {}) };
+    const outer = new Set([...Object.keys(b), ...Object.keys(n)]);
+    outer.forEach(id => {
+      const bi = b[id] || {}, ni = n[id] || {};
+      const inner = new Set([...Object.keys(bi), ...Object.keys(ni)]);
+      let cur = { ...(out[id] || {}) };
+      let touched = false;
+      inner.forEach(k => {
+        if (bi[k] === ni[k]) return;          // この画面では変えていない
+        touched = true;
+        if (ni[k] === undefined) delete cur[k];
+        else cur[k] = ni[k];
+      });
+      if (touched) {
+        if (Object.keys(cur).length) out[id] = cur;
+        else delete out[id];
+      }
+    });
+    return out;
+  }
+
+  function mergeOnto(remote, base, next) {
+    if (!remote || !base) return next;
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const merged = { ...remote };
+    ['records', 'sources', 'categoryStartDates', 'cohortScope'].forEach(k => {
+      merged[k] = applyMapDiff(remote, base, next, k);
+    });
+    // 配列（スタッフ・カリキュラム）は編集するのが実質1人なので、変更があれば丸ごと採用する
+    ['staff', 'curricula'].forEach(k => {
+      if (!same(base[k], next[k])) merged[k] = next[k];
+    });
+    // それ以外のキーも、この画面で変えていれば採用する
+    Object.keys(next).forEach(k => {
+      if (['records','sources','categoryStartDates','cohortScope','staff','curricula'].indexOf(k) >= 0) return;
+      if (!same(base[k], next[k])) merged[k] = next[k];
+    });
+    return merged;
+  }
+
   const persist = useCallback(async (next) => {
     setSaving(true);
-    try { await window.storage.set(DATA_KEY, JSON.stringify(next)); } catch {}
+    try {
+      let remote = null;
+      try {
+        const r = await window.storage.get(DATA_KEY);
+        remote = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+      } catch (e) { /* 読めなければ素直に書く */ }
+      const merged = mergeOnto(remote, baseRef.current, next);
+      await window.storage.set(DATA_KEY, JSON.stringify(merged));
+      baseRef.current = merged;
+      if (JSON.stringify(merged) !== JSON.stringify(next)) setData(merged);
+    } catch (e) {}
     setSaving(false);
   }, []);
   function update(fn) {

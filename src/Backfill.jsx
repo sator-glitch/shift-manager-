@@ -178,6 +178,13 @@ export default function BackfillApp() {
       </div>
 
       {/* 未記入だけを先頭に出す */}
+      {done && remaining.length > 0 && (
+        <div style={{ fontSize: '12.5px', color: '#8A6B2F', fontWeight: 700, marginTop: '12px', background: '#FBF2DF', border: '1px solid #E8D9B4', borderRadius: '8px', padding: '11px 13px', lineHeight: 1.7 }}>
+          前回の回答はそのまま残っています。<br />
+          新しく{remaining.length}件が追加されたので、そこだけ入れて、もう一度送信してください。
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
         {holeRows.map(({ it, prev, next }) => {
           const a = answers[it.id] || {};
@@ -186,7 +193,12 @@ export default function BackfillApp() {
           return (
             <div key={it.id} style={{ background: '#FFFFFF', border: '2px solid ' + (answered ? '#BFD3C4' : '#D8C9A8'), borderRadius: '12px', padding: '13px 14px' }}>
               <div style={{ fontSize: '10.5px', color: '#B0A99A', fontWeight: 700 }}>{it.category || ''}</div>
-              <div style={{ fontSize: '15px', fontWeight: 800, color: INK, marginTop: '2px' }}>{it.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: INK, flex: '1 1 auto' }}>{it.name}</span>
+                {answered
+                  ? <span style={{ fontSize: '10px', fontWeight: 800, color: '#3A5C46', background: '#E8F1EA', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>入力済</span>
+                  : <span style={{ fontSize: '10px', fontWeight: 800, color: '#8A6B2F', background: '#FBF2DF', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>未入力</span>}
+              </div>
 
               {(prev || next) && (
                 <div style={{ fontSize: '11px', color: '#9C9486', marginTop: '8px', background: '#F7F5EF', borderRadius: '7px', padding: '7px 9px', lineHeight: 1.65 }}>
@@ -263,7 +275,9 @@ export default function BackfillApp() {
             fontSize: '14.5px', fontWeight: 800, fontFamily: 'inherit',
             cursor: remaining.length > 0 ? 'default' : 'pointer',
           }}>
-          {sending ? '送信中…' : done ? '送信しました（もう一度送れます）' : remaining.length > 0 ? '残り' + remaining.length + '項目' : '送信する'}
+          {sending ? '送信中…'
+            : remaining.length > 0 ? '残り' + remaining.length + '項目'
+            : done ? '送信しました（もう一度送れます）' : '送信する'}
         </button>
         {done && (
           <div style={{ fontSize: '12px', color: '#2B4A3A', fontWeight: 700, marginTop: '10px', textAlign: 'center' }}>

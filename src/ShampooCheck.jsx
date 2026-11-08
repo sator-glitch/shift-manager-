@@ -7,6 +7,39 @@ const CURRICULUM_KEY = 'curriculum_v2';            // スタッフ一覧を読�
 const MASTER_PW_KEY  = 'shift_manager_master_password_v1';
 const WORKSPACES_KEY = 'shift_manager_workspaces_v1';      // 採点する人の候補（トレーナー）を集める
 
+// 勉強会ページのトレーナー名は あだ名・名字だけ の表記がまざっているので本名に寄せる。
+// 出典: プロジェクトの「勉強会_割り振り記録_名寄せ辞書」
+const NAME_ALIASES = {
+  'わたる':'砂川航', '航':'砂川航',
+  'さやか':'大久保紗香', '大久保':'大久保紗香',
+  'ことみ':'田村琴海', '田村':'田村琴海',
+  'ななせ':'上田奈々世', '上田':'上田奈々世',
+  'まや':'池田麻弥',
+  'まな':'池崎真菜',
+  '太陽':'成川太陽',
+  '海秀':'長山海秀', '長山':'長山海秀',
+  'くろうど':'梶原蔵人', '蔵人':'梶原蔵人',
+  '永田':'永田竜士',
+  '杉野':'杉野雄亮',
+  '西岡':'西岡健太郎',
+  '清水':'清水咲季',
+  '荒木':'荒木大輔',
+  '翔太':'池田翔太', 'いけしょー':'池田翔太',
+  '喜友名':'喜友名夏海',
+  '祝部':'祝部真子',
+  '瀬戸岡':'瀬戸岡和哉',
+  '諒':'佐藤諒',
+  'まつり':'石原まつり',
+  'ほのか':'鈴木帆乃花',
+  'めい':'友保芽依',
+  'ユキト':'齋藤弓希斗',
+};
+const NAME_EXCLUDE = ['テスト', 'テスト太郎'];
+function normName(raw) {
+  const n = String(raw || '').replace(/[（(].*$/, '').trim();   // 「諒（月他）」→「諒」
+  return NAME_ALIASES[n] || n;
+}
+
 // ─── 公開前フラグ ───────────────────────────────────────────────
 // true の間は「準備中」の画面だけを出す。
 // 中身を確認したい時は URL の末尾に ?preview=1 を付ける。
@@ -236,12 +269,12 @@ function ShampooCheckInner() {
           const d = await window.storage.get('shift_manager_workspace_' + w.id);
           const ws = typeof d.value === 'string' ? JSON.parse(d.value) : d.value;
           (ws?.trainers || []).forEach(t => {
-            const n = String(t.name || '').replace(/[（(].*$/, '').trim();
-            if (n) names.add(n);
+            const n = normName(t.name);
+            if (n && !NAME_EXCLUDE.includes(n)) names.add(n);
           });
         } catch (e) {}
       }
-      setTrainers([...names].sort());
+      setTrainers([...names].sort());   // カリキュラム在籍との重複は描画時に外す
     } catch (e) {}
     setLoading(false);
   })(); }, []);
@@ -407,6 +440,9 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
   const person = staff.find(s => s.id === staffId);
   const res    = judge(scores);
   const cohorts = [...new Set(staff.map(s => s.cohort))].sort();
+  // カリキュラムに載っている人は学年のグループに出すので、トレーナー群からは外して重複をなくす
+  const staffNames = new Set(staff.map(s => s.name));
+  const outsideTrainers = (trainers || []).filter(n => !staffNames.has(n));
 
   function pick(item, v) {
     setScores(prev => {
@@ -456,9 +492,9 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
             <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {trainers.length > 0 && (
-                <optgroup label="トレーナー">
-                  {trainers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
+              {outsideTrainers.length > 0 && (
+                <optgroup label="スタイリスト・トレーナー">
+                  {outsideTrainers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
                 </optgroup>
               )}
               {cohorts.map(c => (

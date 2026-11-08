@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen, Pencil } from 'lucide-react';
+import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, Download, Tag, Upload, Save, CalendarOff, BookOpen, Pencil, Droplets } from 'lucide-react';
 import CurriculumApp from './Curriculum.jsx';
 import JudgmentPanel, { countInfoOf, splitCountName, asEntryList } from './JudgmentPanel.jsx';
 import JudgmentStats from './JudgmentStats.jsx';
@@ -1405,17 +1405,6 @@ export default function ShiftManager() {
             店舗（シフト）を選んでください
           </div>
 
-          {/* 他のアプリへのリンク */}
-          <div className="no-print" style={{ display:'flex', gap:'8px', justifyContent:'center', flexWrap:'wrap', marginBottom:'22px' }}>
-            <a href="/curriculum.html" style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'9px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#1F1C18', fontSize:'12px', fontWeight:600, textDecoration:'none' }}>
-              カリキュラム管理
-            </a>
-            <a href="/shampoo.html" style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'9px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#1F1C18', fontSize:'12px', fontWeight:600, textDecoration:'none' }}>
-              シャンプーチェック
-              <span style={{ fontSize:'10px', fontWeight:600, color:'#9C9486', background:'#F3EFE6', borderRadius:'999px', padding:'2px 7px' }}>準備中</span>
-            </a>
-          </div>
-
           {restoreMessage && (
             <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '10px', background: '#EAF1ED', border: '1px solid #C9DDD0', fontSize: '12px', color: '#2B4A3A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
               <span>{restoreMessage}</span>
@@ -1498,6 +1487,13 @@ export default function ShiftManager() {
             <button onClick={() => setShowCurriculumStandalone(true)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 18px', borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#1F1C18', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
               <BookOpen size={16} /> カリキュラム
             </button>
+          </div>
+
+          <div style={{ marginTop: '8px' }}>
+            <a href="/shampoo.html" style={{ width: '100%', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 18px', borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#1F1C18', fontSize: '14px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none' }}>
+              <Droplets size={16} /> シャンプーチェック
+              <span style={{ fontSize: '10px', fontWeight: 600, color: '#9C9486', background: '#F3EFE6', borderRadius: '999px', padding: '2px 8px' }}>準備中</span>
+            </a>
           </div>
 
           {hasMasterAccess && (

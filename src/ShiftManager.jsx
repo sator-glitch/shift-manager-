@@ -59,6 +59,9 @@ function assistantTypeColor(assistantTypes, typeName) {
 }
 
 // ─── 所属店舗（1つのワークスペースに複数店舗が混ざるとき用）
+// シャンプーの時間帯だけは、アシスタントもトレーナー役として選べるようにする
+const SHAMPOO_CATEGORY = 'シャンプー';
+
 const STORE_COLOR_PALETTE = [
   '#4361EE', '#E63946', '#2A9D8F', '#F4A300',
   '#9D4EDD', '#06A77D', '#EF476F', '#118AB2',
@@ -1264,13 +1267,22 @@ export default function ShiftManager() {
 
   function nameById(id, type) {
     const list = type === 'trainer' ? trainers : assistants;
-    return list.find(p => p.id === id)?.name || '?';
+    const hit = list.find(p => p.id === id);
+    if (hit) return hit.name;
+    // シャンプーのときはアシスタントがトレーナー側に入るので、もう片方も探す
+    const other = type === 'trainer' ? assistants : trainers;
+    return other.find(p => p.id === id)?.name || '?';
+  }
+  // その人がアシスタント一覧の側の人か（シャンプーでトレーナー役に入った場合の判定）
+  function isAssistantPerson(id) {
+    return assistants.some(p => p.id === id);
   }
 
   // 選択した順番ではなく、トレーナー・アシスタント一覧の並び順（ランク順）で表示するための並べ替え
   function sortIdsByRank(ids, type) {
     const list = type === 'trainer' ? trainers : assistants;
-    return [...(ids || [])].sort((a, b) => list.findIndex(p => p.id === a) - list.findIndex(p => p.id === b));
+    const rank = id => { const i = list.findIndex(p => p.id === id); return i < 0 ? 9999 : i; };
+    return [...(ids || [])].sort((a, b) => rank(a) - rank(b));
   }
 
   const prevMonth = month === 0 ? 11 : month - 1;
@@ -2351,8 +2363,9 @@ export default function ShiftManager() {
                           <div>
                             <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px', fontWeight: 600 }}>{isUnlocked ? 'トレーナー（クリックで担当に設定）' : 'トレーナー'}</div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                              {isUnlocked ? trainers.map(t => {
+                              {isUnlocked ? (session.category === SHAMPOO_CATEGORY ? [...trainers, ...assistants] : trainers).map(t => {
                                 const on = session.assigned?.trainers?.includes(t.id);
+                                const fromAssistants = isAssistantPerson(t.id);
                                 const count = trainerMonthCounts.find(tc => tc.id === t.id)?.byCategory?.[session.category] ?? 0;
                                 const personOff = (t.offDates || []).includes(ds);
                                 const blocked = closedToday || personOff;
@@ -2362,6 +2375,9 @@ export default function ShiftManager() {
                                     title={blocked ? (closedToday ? '定休日のため割り当てできません' : `${t.name}さんの休みのため割り当てできません`) : undefined}
                                     style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: blocked ? '1px solid #EEE9DE' : (on ? '1px solid #2B2823' : '1px solid #EEE9DE'), background: blocked ? '#F3F1EC' : (on ? '#2B2823' : '#FAF8F4'), color: blocked ? '#C9C2B2' : (on ? '#FAF8F4' : '#9C9486'), cursor: blocked ? 'not-allowed' : 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
                                     <StoreDot stores={stores} store={t.store} />{t.name}
+                                    {fromAssistants && (
+                                      <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '999px', background: on ? '#FAF8F4' : '#EFEAE0', color: on ? '#2B2823' : '#8A8378', fontWeight: 700 }}>アシ</span>
+                                    )}
                                     <span style={{ fontSize: '10px', opacity: 0.7 }}>
                                       {`(${count})`}{blocked ? (closedToday ? ' 定休日' : ' 休み') : ''}
                                     </span>
@@ -2370,7 +2386,10 @@ export default function ShiftManager() {
                               }) : (
                                 (session.assigned?.trainers || []).length > 0
                                   ? sortIdsByRank(session.assigned.trainers, 'trainer').map(id => (
-                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}><StoreDot stores={stores} store={storeOf(id)} />{nameById(id, 'trainer')}</span>
+                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                        <StoreDot stores={stores} store={storeOf(id)} />{nameById(id, 'trainer')}
+                                        {isAssistantPerson(id) && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '999px', background: '#FAF8F4', color: '#2B2823', fontWeight: 700 }}>アシ</span>}
+                                      </span>
                                     ))
                                   : <span style={{ fontSize: '12px', color: '#C2BBA9' }}>未割り当て</span>
                               )}
@@ -2533,7 +2552,7 @@ export default function ShiftManager() {
                                <div style={{ padding: '10px', background: '#F0F4FF', borderRadius: '8px', marginBottom: '10px' }}>
                                  <div style={{ fontSize: '11px', color: '#4361EE', fontWeight: 700, marginBottom: '8px' }}>{nameById(manualPairingTrainerId, 'trainer')} の担当アシスタントを選択</div>
                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                   {_pt.map(aid => {
+                                   {_pt.filter(aid => aid !== manualPairingTrainerId).map(aid => {
                                      const _ia = (day?.dayPairings?.[manualPairingTrainerId] || []).includes(aid);
                                      const _at2 = (day?.dayTypeMap || {})[aid];
                                      const _ao = _at.some(tid => tid !== manualPairingTrainerId && (day?.dayPairings?.[tid] || []).includes(aid));

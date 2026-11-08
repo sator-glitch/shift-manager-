@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList, Users, GripVertical } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList, Users, GripVertical, Lock, X } from 'lucide-react';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY       = 'shampoo_check_v1';
 const CURRICULUM_KEY = 'curriculum_v2';            // スタッフ一覧を読むだけ
-const MASTER_PW_KEY  = 'shift_manager_master_password_v1';
+const MASTER_PW_KEY  = 'shift_manager_master_password_v1';   // 総管理者（すべて開く）
+const SCORE_PW_KEY   = 'shampoo_score_pw_v1';                // 採点するためのパスワード
+const PEOPLE_PW_KEY  = 'shampoo_people_pw_v1';               // 人員登録するためのパスワード
 const WORKSPACES_KEY = 'shift_manager_workspaces_v1';      // 採点する人の候補（トレーナー）を集める
 
 // 勉強会ページのトレーナー名は あだ名・名字だけ の表記がまざっているので本名に寄せる。
@@ -260,6 +262,11 @@ export default function ShampooCheckApp() {
 function ShampooCheckInner() {
   const [data, setData]       = useState({ version:1, results:{}, people:null });
   const [masterPw, setMasterPw] = useState('');
+  const [scorePw, setScorePw]   = useState('');
+  const [peoplePw, setPeoplePw] = useState('');
+  const [unlocked, setUnlocked] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('shampoo_unlocked') || '{}'); } catch (e) { return {}; }
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [tab, setTab]         = useState('check');           // check | people
@@ -274,6 +281,8 @@ function ShampooCheckInner() {
       if (v && typeof v === 'object') d = { version:1, results:{}, people:null, ...v };
     } catch (e) { /* 初回は未作成 */ }
     try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
+    try { const r = await window.storage.get(SCORE_PW_KEY);  setScorePw(r.value || ''); } catch (e) {}
+    try { const r = await window.storage.get(PEOPLE_PW_KEY); setPeoplePw(r.value || ''); } catch (e) {}
 
     // 人員がまだ無ければ、カリキュラムと勉強会ページから初回だけ取り込む。
     // 以後はこのアプリの中で追加・編集・削除する（カリキュラムは書き換えない）。
@@ -362,6 +371,22 @@ function ShampooCheckInner() {
   async function savePeople(next) {
     await persist(remote => ({ ...remote, people: next }));
   }
+  async function savePasswords(score, people) {
+    try {
+      await window.storage.set(SCORE_PW_KEY, score);
+      await window.storage.set(PEOPLE_PW_KEY, people);
+      setScorePw(score); setPeoplePw(people);
+      return true;
+    } catch (e) { setErr('パスワードの保存に失敗しました'); return false; }
+  }
+  function unlock(area) {
+    const next = { ...unlocked, [area]: true };
+    setUnlocked(next);
+    try { sessionStorage.setItem('shampoo_unlocked', JSON.stringify(next)); } catch (e) {}
+  }
+  // パスワードが未設定の場所は、設定されるまで誰でも使える
+  const canScore  = !scorePw  || unlocked.score  || (masterPw && unlocked.master);
+  const canPeople = !peoplePw || unlocked.people || (masterPw && unlocked.master);
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
@@ -404,10 +429,21 @@ function ShampooCheckInner() {
         </div>
       )}
 
-      {tab === 'people' && <PeopleView people={people} results={results} onSave={savePeople} saving={saving} />}
+      {tab === 'people' && (canPeople
+        ? <PeopleView people={people} results={results} onSave={savePeople} saving={saving}
+            scorePw={scorePw} peoplePw={peoplePw} onSavePasswords={savePasswords} />
+        : <PasswordGate title="人員登録" note="スタッフの追加・編集・削除・並べ替えができます"
+            expected={peoplePw} master={masterPw}
+            onOk={isMaster => { unlock('people'); if (isMaster) unlock('master'); }}
+            onCancel={() => setTab('check')} />)}
 
       {tab === 'check' && view.name === 'list'   && <ListView results={results} onOpen={id => setView({ name:'detail', id })} />}
-      {tab === 'check' && view.name === 'form'   && <FormView people={people} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />}
+      {tab === 'check' && view.name === 'form'   && (canScore
+        ? <FormView people={people} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />
+        : <PasswordGate title="採点" note="新しく採点する／採点を直すときに必要です"
+            expected={scorePw} master={masterPw}
+            onOk={isMaster => { unlock('score'); if (isMaster) unlock('master'); }}
+            onCancel={() => setView({ name:'list' })} />)}
       {tab === 'check' && view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results} masterPw={masterPw}
                                    onBack={() => setView({ name:'list' })}
                                    onEdit={rec => setView({ name:'form', base: rec })}
@@ -516,8 +552,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
   const members = people.members || [];
   const person  = members.find(s => s.id === staffId);
   const res     = judge(scores);
-  // 人員登録で並べた店舗の順に出す。店舗なしは最後
-  const groups  = [...(people.stores || []), ''].filter(g => members.some(m => (m.store || '') === g));
+  // 人員登録で並べた順にそのまま出す
 
   function pick(item, v) {
     setScores(prev => {
@@ -555,12 +590,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>チェックを受ける側</span>
             <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {groups.map(c => (
-                <optgroup key={c} label={c || '店舗なし'}>
-                  {members.filter(s => (s.store || '') === c).map(s =>
-                    <option key={s.id} value={s.id}>{s.name}</option>)}
-                </optgroup>
-              ))}
+              {members.map(s => <option key={s.id} value={s.id}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
             </select>
           </label>
           <label style={lblStyle}>
@@ -568,12 +598,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
             <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {groups.map(c => (
-                <optgroup key={c} label={c || '店舗なし'}>
-                  {members.filter(s => (s.store || '') === c).map(s =>
-                    <option key={'s-' + s.id} value={s.name}>{s.name}</option>)}
-                </optgroup>
-              ))}
+              {members.map(s => <option key={'s-' + s.id} value={s.name}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
               <option value="__other__">その他（手入力）</option>
             </select>
             {scorer === '__other__' && (
@@ -832,13 +857,47 @@ function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
 const linkBtn = { background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline', padding:'4px' };
 
 
-// ─── 人員登録（店舗ごと・ドラッグで並べ替え）───────────────────
-function PeopleView({ people, results, onSave, saving }) {
+// ─── パスワード画面 ─────────────────────────────────────────────
+function PasswordGate({ title, note, expected, master, onOk, onCancel }) {
+  const [pw, setPw]   = useState('');
+  const [err, setErr] = useState('');
+  function go() {
+    if (master && pw === master) { onOk(true); return; }
+    if (pw === expected) { onOk(false); return; }
+    setErr('パスワードが違います');
+  }
+  return (
+    <div style={{ maxWidth:'360px', margin:'30px auto', textAlign:'center' }}>
+      <Lock size={24} color={C.mute} style={{ marginBottom:'10px' }} />
+      <div style={{ fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'4px' }}>{title}にはパスワードが必要です</div>
+      <div style={{ fontSize:'12px', color:C.mute, marginBottom:'18px' }}>{note}</div>
+      <input type="password" value={pw} autoFocus
+        onChange={e => { setPw(e.target.value); setErr(''); }}
+        onKeyDown={e => e.key === 'Enter' && go()}
+        placeholder="パスワードを入力"
+        style={{ width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${err ? C.ng : C.line}`, fontSize:'14px', boxSizing:'border-box', textAlign:'center' }} />
+      {err && <div style={{ fontSize:'12px', color:C.ng, marginTop:'8px' }}>{err}</div>}
+      <button onClick={go}
+        style={{ width:'100%', marginTop:'12px', padding:'12px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>
+        開く
+      </button>
+      <button onClick={onCancel} style={{ ...linkBtn, marginTop:'10px' }}>戻る</button>
+    </div>
+  );
+}
+
+// ─── 人員登録 ───────────────────────────────────────────────────
+function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords }) {
   const [draft, setDraft]       = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
-  const [newName, setNewName]   = useState({});
+  const [newName, setNewName]   = useState('');
+  const [newNameStore, setNewNameStore] = useState('');
   const [newStore, setNewStore] = useState('');
-  const [drag, setDrag]         = useState(null);   // {type:'member'|'store', id}
-  const [over, setOver]         = useState(null);   // {type:'member'|'store'|'zone', id}
+  const [drag, setDrag]         = useState(null);
+  const [over, setOver]         = useState(null);
+  const [pwOpen, setPwOpen]     = useState(false);
+  const [pw1, setPw1]           = useState(scorePw || '');
+  const [pw2, setPw2]           = useState(peoplePw || '');
+  const [pwMsg, setPwMsg]       = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(people);
 
   const stores  = draft.stores || [];
@@ -846,10 +905,6 @@ function PeopleView({ people, results, onSave, saving }) {
   const used = {};
   (results || []).forEach(r => { used[r.staffId] = (used[r.staffId] || 0) + 1; });
 
-  const groups  = [...stores, ''];
-  const inStore = st => members.filter(m => (m.store || '') === st);
-
-  // ── 人の編集 ──
   function setMember(id, patch) {
     setDraft(d => ({ ...d, members: d.members.map(m => m.id === id ? { ...m, ...patch } : m) }));
   }
@@ -860,78 +915,44 @@ function PeopleView({ people, results, onSave, saving }) {
       : `${m.name}さんを一覧から消します。よろしいですか。`)) return;
     setDraft(d => ({ ...d, members: d.members.filter(x => x.id !== m.id) }));
   }
-  function addMember(st) {
-    const name = (newName[st] || '').trim();
+  function addMember() {
+    const name = newName.trim();
     if (!name) return;
     if (members.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
-    setDraft(d => {
-      const arr = [...d.members];
-      let last = -1;
-      arr.forEach((m, i) => { if ((m.store || '') === st) last = i; });
-      arr.splice(last < 0 ? arr.length : last + 1, 0, { id: uid(), name, store: st });
-      return { ...d, members: arr };
-    });
-    setNewName(v => ({ ...v, [st]: '' }));
+    setDraft(d => ({ ...d, members: [...d.members, { id: uid(), name, store: newNameStore }] }));
+    setNewName('');
   }
-
-  // ── ドラッグで並べ替え ──
-  function dropOnMember(targetId) {
-    if (!drag || drag.type !== 'member' || drag.id === targetId) return;
+  // ドラッグで並べ替え（落とした行の手前に入る）
+  function dropOn(targetId) {
+    if (!drag || drag === targetId) return;
     setDraft(d => {
       const arr = [...d.members];
-      const from = arr.findIndex(m => m.id === drag.id);
+      const from = arr.findIndex(m => m.id === drag);
       if (from < 0) return d;
       const [moved] = arr.splice(from, 1);
       const to = arr.findIndex(m => m.id === targetId);
-      if (to < 0) return d;
-      arr.splice(to, 0, { ...moved, store: arr[to].store || '' });   // 落とした行の手前に入れる
+      arr.splice(to < 0 ? arr.length : to, 0, moved);
       return { ...d, members: arr };
     });
   }
-  function dropOnStoreEnd(st) {
-    if (!drag || drag.type !== 'member') return;
+  function dropAtEnd() {
+    if (!drag) return;
     setDraft(d => {
       const arr = [...d.members];
-      const from = arr.findIndex(m => m.id === drag.id);
+      const from = arr.findIndex(m => m.id === drag);
       if (from < 0) return d;
       const [moved] = arr.splice(from, 1);
-      let last = -1;
-      arr.forEach((m, i) => { if ((m.store || '') === st) last = i; });
-      arr.splice(last < 0 ? arr.length : last + 1, 0, { ...moved, store: st });
+      arr.push(moved);
       return { ...d, members: arr };
-    });
-  }
-  function dropOnStoreHeader(targetStore) {
-    if (!drag) return;
-    if (drag.type === 'member') { dropOnStoreEnd(targetStore); return; }
-    if (drag.id === targetStore) return;
-    setDraft(d => {
-      const ss = [...d.stores];
-      const from = ss.indexOf(drag.id);
-      if (from < 0) return d;
-      ss.splice(from, 1);
-      const to = ss.indexOf(targetStore);
-      ss.splice(to < 0 ? ss.length : to, 0, drag.id);
-      return { ...d, stores: ss, members: sortMembers(d.members, ss) };
     });
   }
   function endDrag() { setDrag(null); setOver(null); }
-  const isOver = (type, id) => over && over.type === type && over.id === id;
 
-  // ── 店舗の編集 ──
-  function renameStore(i, name) {
-    setDraft(d => {
-      const olds = d.stores[i];
-      const ss = [...d.stores]; ss[i] = name;
-      return { ...d, stores: ss, members: d.members.map(m => m.store === olds ? { ...m, store: name } : m) };
-    });
-  }
-  function delStore(i) {
-    const name = stores[i];
-    const n = inStore(name).length;
-    if (n > 0) { alert(`${name}には${n}名います。先に別の店舗へ移すか削除してください。`); return; }
+  function delStore(name) {
+    const n = members.filter(m => m.store === name).length;
+    if (n > 0) { alert(`${name}の人が${n}名います。先に別の店舗へ変えてください。`); return; }
     if (!confirm(`店舗「${name}」を消します。よろしいですか。`)) return;
-    setDraft(d => ({ ...d, stores: d.stores.filter((_, k) => k !== i) }));
+    setDraft(d => ({ ...d, stores: d.stores.filter(x => x !== name) }));
   }
   function addStore() {
     const name = newStore.trim();
@@ -941,123 +962,128 @@ function PeopleView({ people, results, onSave, saving }) {
     setNewStore('');
   }
 
-  const grip = { display:'flex', alignItems:'center', justifyContent:'center', width:'22px', flexShrink:0,
-    color:'#C2BBA9', cursor:'grab' };
+  const grip = { display:'flex', alignItems:'center', justifyContent:'center', width:'22px', flexShrink:0, color:'#C2BBA9', cursor:'grab' };
 
   return (
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
-        ここで登録した人は、シャンプーをする側としても点数をつける側としても選べます。<br />
-        左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんで上下にドラッグすると並べ替えられます。
-        別の店舗の行や見出しの上で離すと、その店舗に移ります。店舗の見出しをつかめば店舗ごと動かせます。<br />
-        追加・編集・削除・並べ替えはシャンプーチェックの中だけに反映され、カリキュラムやシフトは書き換えません。
+        ここに登録した人は、シャンプーをする側としても点数をつける側としても選べます。
+        左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんで上下にドラッグすると並べ替えでき、この順番がそのまま採点画面のプルダウンの順になります。
+        カリキュラムやシフトは書き換えません。
       </div>
 
-      {groups.map(st => {
-        const list = inStore(st);
-        if (st === '' && list.length === 0) return null;
-        const i = stores.indexOf(st);
-        const headerOver = isOver('store', st);
-        return (
-          <div key={st || '__none__'}
-            style={{ background:C.card, border:`1px solid ${headerOver ? C.ok : C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
-
-            {/* 店舗の見出し */}
-            <div
-              draggable={st !== '' && drag?.type === 'store' && drag.id === st}
-              onDragOver={e => { e.preventDefault(); setOver({ type:'store', id:st }); }}
-              onDragLeave={() => setOver(o => (o && o.type === 'store' && o.id === st) ? null : o)}
-              onDrop={e => { e.preventDefault(); dropOnStoreHeader(st); endDrag(); }}
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
+        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
+          スタッフ<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{members.length}名</span>
+        </div>
+        {members.map(m => {
+          const rowOver = over === m.id;
+          const dragging = drag === m.id;
+          return (
+            <div key={m.id}
+              draggable={dragging}
+              onDragOver={e => { e.preventDefault(); setOver(m.id); }}
+              onDragLeave={() => setOver(o => o === m.id ? null : o)}
+              onDrop={e => { e.preventDefault(); dropOn(m.id); endDrag(); }}
               onDragEnd={endDrag}
-              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px',
-                background: headerOver ? C.okBg : C.soft }}>
-              {st === '' ? (
-                <>
-                  <span style={{ ...grip, cursor:'default', opacity:0 }}><GripVertical size={15} /></span>
-                  <div style={{ flex:1, fontSize:'13px', fontWeight:700, color:C.mute }}>店舗なし</div>
-                </>
-              ) : (
-                <>
-                  <span style={grip}
-                    onMouseDown={() => setDrag({ type:'store', id:st })}
-                    onMouseUp={() => setDrag(null)}
-                    onDragStart={() => setDrag({ type:'store', id:st })}>
-                    <GripVertical size={15} />
-                  </span>
-                  <input value={st} onChange={e => renameStore(i, e.target.value)}
-                    style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', fontWeight:700, background:'#FFF' }} />
-                  <button onClick={() => delStore(i)} title="この店舗を削除"
-                    style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                    <Trash2 size={13} />
-                  </button>
-                </>
-              )}
-              <span style={{ fontSize:'11px', color:C.mute, fontWeight:600, flexShrink:0 }}>{list.length}名</span>
-            </div>
-
-            {/* 人 */}
-            {list.map(m => {
-              const rowOver = isOver('member', m.id);
-              const dragging = drag?.type === 'member' && drag.id === m.id;
-              return (
-                <div key={m.id}
-                  draggable={dragging}
-                  onDragOver={e => { e.preventDefault(); setOver({ type:'member', id:m.id }); }}
-                  onDragLeave={() => setOver(o => (o && o.type === 'member' && o.id === m.id) ? null : o)}
-                  onDrop={e => { e.preventDefault(); dropOnMember(m.id); endDrag(); }}
-                  onDragEnd={endDrag}
-                  style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px',
-                    borderTop: rowOver ? `2px solid ${C.ok}` : '1px solid #F7F4EE',
-                    background: dragging ? '#F3EFE6' : 'transparent', opacity: dragging ? 0.5 : 1 }}>
-                  <span style={grip}
-                    onMouseDown={() => setDrag({ type:'member', id:m.id })}
-                    onMouseUp={() => setDrag(null)}
-                    onDragStart={() => setDrag({ type:'member', id:m.id })}>
-                    <GripVertical size={15} />
-                  </span>
-                  <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
-                    style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-                  <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
-                    style={{ ...selStyle, flex:'0 0 120px', padding:'8px 6px' }}>
-                    <option value="">店舗なし</option>
-                    {stores.map(x => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                  <button onClick={() => delMember(m)} title="削除"
-                    style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              );
-            })}
-
-            {/* 末尾に落とす場所 ＋ 追加 */}
-            <div
-              onDragOver={e => { e.preventDefault(); setOver({ type:'zone', id:st }); }}
-              onDragLeave={() => setOver(o => (o && o.type === 'zone' && o.id === st) ? null : o)}
-              onDrop={e => { e.preventDefault(); dropOnStoreEnd(st); endDrag(); }}
-              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px',
-                borderTop: isOver('zone', st) ? `2px solid ${C.ok}` : `1px solid ${C.line}`,
-                background: isOver('zone', st) ? C.okBg : '#FBF9F5' }}>
-              <input value={newName[st] || ''} onChange={e => setNewName(v => ({ ...v, [st]: e.target.value }))}
-                onKeyDown={e => e.key === 'Enter' && addMember(st)} placeholder={st ? `${st}に追加` : '店舗なしに追加'}
-                style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-              <button onClick={() => addMember(st)}
-                style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-                <Plus size={13} /> 追加
+              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px',
+                borderTop: rowOver ? `2px solid ${C.ok}` : '1px solid #F7F4EE',
+                background: dragging ? '#F3EFE6' : 'transparent', opacity: dragging ? 0.5 : 1 }}>
+              <span style={grip}
+                onMouseDown={() => setDrag(m.id)} onMouseUp={() => setDrag(null)}
+                onDragStart={() => setDrag(m.id)}>
+                <GripVertical size={15} />
+              </span>
+              <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
+                style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+              <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
+                style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
+                <option value="">店舗なし</option>
+                {stores.map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <button onClick={() => delMember(m)} title="削除"
+                style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <Trash2 size={13} />
               </button>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+        <div
+          onDragOver={e => { e.preventDefault(); setOver('__end__'); }}
+          onDragLeave={() => setOver(o => o === '__end__' ? null : o)}
+          onDrop={e => { e.preventDefault(); dropAtEnd(); endDrag(); }}
+          style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 12px',
+            borderTop: over === '__end__' ? `2px solid ${C.ok}` : `1px solid ${C.line}`,
+            background: over === '__end__' ? C.okBg : '#FBF9F5' }}>
+          <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addMember()}
+            placeholder="名前"
+            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <select value={newNameStore} onChange={e => setNewNameStore(e.target.value)} style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
+            <option value="">店舗なし</option>
+            {stores.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <button onClick={addMember}
+            style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Plus size={13} /> 追加
+          </button>
+        </div>
+      </div>
 
-      <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'12px', borderRadius:'12px', border:`1px dashed ${C.line}`, marginBottom:'16px' }}>
-        <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
-          placeholder="新しい店舗の名前"
-          style={{ flex:1, minWidth:0, padding:'9px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF' }} />
-        <button onClick={addStore}
-          style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'9px 16px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-          <Plus size={13} /> 店舗を追加
+      {/* 店舗 */}
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'12px' }}>
+        <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'8px' }}>
+          店舗<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>一覧の絞り込みに使います</span>
+        </div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
+          {stores.map(x => (
+            <span key={x} style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'5px 8px 5px 11px', borderRadius:'999px', background:C.soft, fontSize:'12px', color:C.text }}>
+              {x}
+              <span style={{ fontSize:'10px', color:C.mute }}>{members.filter(m => m.store === x).length}</span>
+              <button onClick={() => delStore(x)} style={{ background:'none', border:'none', cursor:'pointer', color:C.mute, padding:0, display:'flex' }}><X size={12} /></button>
+            </span>
+          ))}
+          {stores.length === 0 && <span style={{ fontSize:'12px', color:C.mute }}>店舗がありません</span>}
+        </div>
+        <div style={{ display:'flex', gap:'8px' }}>
+          <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
+            placeholder="新しい店舗の名前"
+            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <button onClick={addStore}
+            style={{ flexShrink:0, padding:'8px 14px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            店舗を追加
+          </button>
+        </div>
+      </div>
+
+      {/* パスワード */}
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'16px' }}>
+        <button onClick={() => setPwOpen(v => !v)}
+          style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
+          <Lock size={13} /> パスワードの設定
+          <span style={{ fontSize:'11px', color:C.mute, fontWeight:500 }}>
+            {scorePw ? '採点：設定あり' : '採点：未設定'} ／ {peoplePw ? '人員登録：設定あり' : '人員登録：未設定'}
+          </span>
         </button>
+        {pwOpen && (
+          <div style={{ marginTop:'12px' }}>
+            <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
+              閲覧（一覧と詳細）はパスワードなしで誰でも見られます。空欄にするとその場所のパスワードを外せます。
+            </div>
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>採点するときのパスワード
+              <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
+                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+            </label>
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>人員登録のパスワード
+              <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
+                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+            </label>
+            <button onClick={async () => { const ok = await onSavePasswords(pw1.trim(), pw2.trim()); setPwMsg(ok ? '保存しました' : ''); }}
+              style={{ padding:'9px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+              パスワードを保存
+            </button>
+            {pwMsg && <span style={{ fontSize:'12px', color:C.ok, marginLeft:'10px' }}>{pwMsg}</span>}
+          </div>
+        )}
       </div>
 
       <div style={{ position:'sticky', bottom:'10px', display:'flex', gap:'8px', alignItems:'center' }}>

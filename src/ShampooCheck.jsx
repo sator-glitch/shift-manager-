@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList, Users } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList, Users, GripVertical } from 'lucide-react';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY       = 'shampoo_check_v1';
@@ -832,11 +832,13 @@ function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
 const linkBtn = { background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline', padding:'4px' };
 
 
-// ─── 人員登録（店舗ごと）───────────────────────────────────────
+// ─── 人員登録（店舗ごと・ドラッグで並べ替え）───────────────────
 function PeopleView({ people, results, onSave, saving }) {
-  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
-  const [newName, setNewName]   = useState({});   // 店舗ごとの入力欄
+  const [draft, setDraft]       = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
+  const [newName, setNewName]   = useState({});
   const [newStore, setNewStore] = useState('');
+  const [drag, setDrag]         = useState(null);   // {type:'member'|'store', id}
+  const [over, setOver]         = useState(null);   // {type:'member'|'store'|'zone', id}
   const dirty = JSON.stringify(draft) !== JSON.stringify(people);
 
   const stores  = draft.stores || [];
@@ -844,26 +846,12 @@ function PeopleView({ people, results, onSave, saving }) {
   const used = {};
   (results || []).forEach(r => { used[r.staffId] = (used[r.staffId] || 0) + 1; });
 
-  const groups = [...stores, ''];   // 最後は店舗なし
+  const groups  = [...stores, ''];
   const inStore = st => members.filter(m => (m.store || '') === st);
 
-  // ── 人 ──
+  // ── 人の編集 ──
   function setMember(id, patch) {
     setDraft(d => ({ ...d, members: d.members.map(m => m.id === id ? { ...m, ...patch } : m) }));
-  }
-  function moveMember(id, dir) {
-    setDraft(d => {
-      const arr = [...d.members];
-      const i = arr.findIndex(m => m.id === id);
-      if (i < 0) return d;
-      const st = arr[i].store || '';
-      // 同じ店舗の中で、ひとつ上（下）の人と入れ替える
-      let j = i + dir;
-      while (j >= 0 && j < arr.length && (arr[j].store || '') !== st) j += dir;
-      if (j < 0 || j >= arr.length) return d;
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-      return { ...d, members: arr };
-    });
   }
   function delMember(m) {
     const n = used[m.id] || 0;
@@ -878,7 +866,6 @@ function PeopleView({ people, results, onSave, saving }) {
     if (members.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
     setDraft(d => {
       const arr = [...d.members];
-      // その店舗の最後に入れる
       let last = -1;
       arr.forEach((m, i) => { if ((m.store || '') === st) last = i; });
       arr.splice(last < 0 ? arr.length : last + 1, 0, { id: uid(), name, store: st });
@@ -887,20 +874,56 @@ function PeopleView({ people, results, onSave, saving }) {
     setNewName(v => ({ ...v, [st]: '' }));
   }
 
-  // ── 店舗 ──
+  // ── ドラッグで並べ替え ──
+  function dropOnMember(targetId) {
+    if (!drag || drag.type !== 'member' || drag.id === targetId) return;
+    setDraft(d => {
+      const arr = [...d.members];
+      const from = arr.findIndex(m => m.id === drag.id);
+      if (from < 0) return d;
+      const [moved] = arr.splice(from, 1);
+      const to = arr.findIndex(m => m.id === targetId);
+      if (to < 0) return d;
+      arr.splice(to, 0, { ...moved, store: arr[to].store || '' });   // 落とした行の手前に入れる
+      return { ...d, members: arr };
+    });
+  }
+  function dropOnStoreEnd(st) {
+    if (!drag || drag.type !== 'member') return;
+    setDraft(d => {
+      const arr = [...d.members];
+      const from = arr.findIndex(m => m.id === drag.id);
+      if (from < 0) return d;
+      const [moved] = arr.splice(from, 1);
+      let last = -1;
+      arr.forEach((m, i) => { if ((m.store || '') === st) last = i; });
+      arr.splice(last < 0 ? arr.length : last + 1, 0, { ...moved, store: st });
+      return { ...d, members: arr };
+    });
+  }
+  function dropOnStoreHeader(targetStore) {
+    if (!drag) return;
+    if (drag.type === 'member') { dropOnStoreEnd(targetStore); return; }
+    if (drag.id === targetStore) return;
+    setDraft(d => {
+      const ss = [...d.stores];
+      const from = ss.indexOf(drag.id);
+      if (from < 0) return d;
+      ss.splice(from, 1);
+      const to = ss.indexOf(targetStore);
+      ss.splice(to < 0 ? ss.length : to, 0, drag.id);
+      return { ...d, stores: ss, members: sortMembers(d.members, ss) };
+    });
+  }
+  function endDrag() { setDrag(null); setOver(null); }
+  const isOver = (type, id) => over && over.type === type && over.id === id;
+
+  // ── 店舗の編集 ──
   function renameStore(i, name) {
     setDraft(d => {
       const olds = d.stores[i];
       const ss = [...d.stores]; ss[i] = name;
       return { ...d, stores: ss, members: d.members.map(m => m.store === olds ? { ...m, store: name } : m) };
-    });
-  }
-  function moveStore(i, dir) {
-    const j = i + dir;
-    if (j < 0 || j >= stores.length) return;
-    setDraft(d => {
-      const ss = [...d.stores]; [ss[i], ss[j]] = [ss[j], ss[i]];
-      return { ...d, stores: ss, members: sortMembers(d.members, ss) };
     });
   }
   function delStore(i) {
@@ -918,32 +941,49 @@ function PeopleView({ people, results, onSave, saving }) {
     setNewStore('');
   }
 
-  const arrowBtn = { width:'26px', height:'22px', borderRadius:'6px', border:`1px solid ${C.line}`,
-    background:'#FFF', color:C.mute, cursor:'pointer', fontSize:'10px', lineHeight:1, padding:0 };
+  const grip = { display:'flex', alignItems:'center', justifyContent:'center', width:'22px', flexShrink:0,
+    color:'#C2BBA9', cursor:'grab' };
 
   return (
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
         ここで登録した人は、シャンプーをする側としても点数をつける側としても選べます。<br />
+        左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんで上下にドラッグすると並べ替えられます。
+        別の店舗の行や見出しの上で離すと、その店舗に移ります。店舗の見出しをつかめば店舗ごと動かせます。<br />
         追加・編集・削除・並べ替えはシャンプーチェックの中だけに反映され、カリキュラムやシフトは書き換えません。
       </div>
 
-      {/* 店舗ごとの人 */}
       {groups.map(st => {
         const list = inStore(st);
         if (st === '' && list.length === 0) return null;
         const i = stores.indexOf(st);
+        const headerOver = isOver('store', st);
         return (
-          <div key={st || '__none__'} style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px', background:C.soft }}>
+          <div key={st || '__none__'}
+            style={{ background:C.card, border:`1px solid ${headerOver ? C.ok : C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
+
+            {/* 店舗の見出し */}
+            <div
+              draggable={st !== '' && drag?.type === 'store' && drag.id === st}
+              onDragOver={e => { e.preventDefault(); setOver({ type:'store', id:st }); }}
+              onDragLeave={() => setOver(o => (o && o.type === 'store' && o.id === st) ? null : o)}
+              onDrop={e => { e.preventDefault(); dropOnStoreHeader(st); endDrag(); }}
+              onDragEnd={endDrag}
+              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px',
+                background: headerOver ? C.okBg : C.soft }}>
               {st === '' ? (
-                <div style={{ flex:1, fontSize:'13px', fontWeight:700, color:C.mute }}>店舗なし</div>
+                <>
+                  <span style={{ ...grip, cursor:'default', opacity:0 }}><GripVertical size={15} /></span>
+                  <div style={{ flex:1, fontSize:'13px', fontWeight:700, color:C.mute }}>店舗なし</div>
+                </>
               ) : (
                 <>
-                  <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
-                    <button onClick={() => moveStore(i, -1)} disabled={i === 0} style={{ ...arrowBtn, opacity: i === 0 ? 0.3 : 1 }}>▲</button>
-                    <button onClick={() => moveStore(i, 1)} disabled={i === stores.length - 1} style={{ ...arrowBtn, opacity: i === stores.length - 1 ? 0.3 : 1 }}>▼</button>
-                  </div>
+                  <span style={grip}
+                    onMouseDown={() => setDrag({ type:'store', id:st })}
+                    onMouseUp={() => setDrag(null)}
+                    onDragStart={() => setDrag({ type:'store', id:st })}>
+                    <GripVertical size={15} />
+                  </span>
                   <input value={st} onChange={e => renameStore(i, e.target.value)}
                     style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', fontWeight:700, background:'#FFF' }} />
                   <button onClick={() => delStore(i)} title="この店舗を削除"
@@ -955,27 +995,49 @@ function PeopleView({ people, results, onSave, saving }) {
               <span style={{ fontSize:'11px', color:C.mute, fontWeight:600, flexShrink:0 }}>{list.length}名</span>
             </div>
 
-            {list.map((m, k) => (
-              <div key={m.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', borderTop:'1px solid #F7F4EE' }}>
-                <div style={{ display:'flex', flexDirection:'column', gap:'2px', flexShrink:0 }}>
-                  <button onClick={() => moveMember(m.id, -1)} disabled={k === 0} style={{ ...arrowBtn, opacity: k === 0 ? 0.3 : 1 }}>▲</button>
-                  <button onClick={() => moveMember(m.id, 1)} disabled={k === list.length - 1} style={{ ...arrowBtn, opacity: k === list.length - 1 ? 0.3 : 1 }}>▼</button>
+            {/* 人 */}
+            {list.map(m => {
+              const rowOver = isOver('member', m.id);
+              const dragging = drag?.type === 'member' && drag.id === m.id;
+              return (
+                <div key={m.id}
+                  draggable={dragging}
+                  onDragOver={e => { e.preventDefault(); setOver({ type:'member', id:m.id }); }}
+                  onDragLeave={() => setOver(o => (o && o.type === 'member' && o.id === m.id) ? null : o)}
+                  onDrop={e => { e.preventDefault(); dropOnMember(m.id); endDrag(); }}
+                  onDragEnd={endDrag}
+                  style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px',
+                    borderTop: rowOver ? `2px solid ${C.ok}` : '1px solid #F7F4EE',
+                    background: dragging ? '#F3EFE6' : 'transparent', opacity: dragging ? 0.5 : 1 }}>
+                  <span style={grip}
+                    onMouseDown={() => setDrag({ type:'member', id:m.id })}
+                    onMouseUp={() => setDrag(null)}
+                    onDragStart={() => setDrag({ type:'member', id:m.id })}>
+                    <GripVertical size={15} />
+                  </span>
+                  <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
+                    style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+                  <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
+                    style={{ ...selStyle, flex:'0 0 120px', padding:'8px 6px' }}>
+                    <option value="">店舗なし</option>
+                    {stores.map(x => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <button onClick={() => delMember(m)} title="削除"
+                    style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <Trash2 size={13} />
+                  </button>
                 </div>
-                <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
-                  style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-                <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
-                  style={{ ...selStyle, flex:'0 0 120px', padding:'8px 6px' }}>
-                  <option value="">店舗なし</option>
-                  {stores.map(x => <option key={x} value={x}>{x}</option>)}
-                </select>
-                <button onClick={() => delMember(m)} title="削除"
-                  style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
+              );
+            })}
 
-            <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
+            {/* 末尾に落とす場所 ＋ 追加 */}
+            <div
+              onDragOver={e => { e.preventDefault(); setOver({ type:'zone', id:st }); }}
+              onDragLeave={() => setOver(o => (o && o.type === 'zone' && o.id === st) ? null : o)}
+              onDrop={e => { e.preventDefault(); dropOnStoreEnd(st); endDrag(); }}
+              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px',
+                borderTop: isOver('zone', st) ? `2px solid ${C.ok}` : `1px solid ${C.line}`,
+                background: isOver('zone', st) ? C.okBg : '#FBF9F5' }}>
               <input value={newName[st] || ''} onChange={e => setNewName(v => ({ ...v, [st]: e.target.value }))}
                 onKeyDown={e => e.key === 'Enter' && addMember(st)} placeholder={st ? `${st}に追加` : '店舗なしに追加'}
                 style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
@@ -988,8 +1050,7 @@ function PeopleView({ people, results, onSave, saving }) {
         );
       })}
 
-      {/* 店舗を足す */}
-      <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'12px', borderRadius:'12px', border:`1px dashed ${C.line}`, background:'transparent', marginBottom:'16px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'12px', borderRadius:'12px', border:`1px dashed ${C.line}`, marginBottom:'16px' }}>
         <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
           placeholder="新しい店舗の名前"
           style={{ flex:1, minWidth:0, padding:'9px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF' }} />

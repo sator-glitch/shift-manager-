@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList, Users } from 'lucide-react';
 
 // ─── Firebase キー ───────────────────────────────────────────────
 const DATA_KEY       = 'shampoo_check_v1';

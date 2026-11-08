@@ -1412,6 +1412,7 @@ export default function ShiftManager() {
             </a>
             <a href="/shampoo.html" style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'9px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#1F1C18', fontSize:'12px', fontWeight:600, textDecoration:'none' }}>
               シャンプーチェック
+              <span style={{ fontSize:'10px', fontWeight:600, color:'#9C9486', background:'#F3EFE6', borderRadius:'999px', padding:'2px 7px' }}>準備中</span>
             </a>
           </div>
 

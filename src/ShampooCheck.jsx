@@ -6,6 +6,11 @@ const DATA_KEY       = 'shampoo_check_v1';
 const CURRICULUM_KEY = 'curriculum_v2';            // スタッフ一覧を読むだけ
 const MASTER_PW_KEY  = 'shift_manager_master_password_v1';
 
+// ─── 公開前フラグ ───────────────────────────────────────────────
+// true の間は「準備中」の画面だけを出す。
+// 中身を確認したい時は URL の末尾に ?preview=1 を付ける。
+const COMING_SOON = true;
+
 // ─── チェック項目（2024シャンプー強化チェック表）──────────────────
 // s: ⭐︎項目（3点でないと不合格） / b: 0 or 3 のみ
 const ITEM_SET = '2024';
@@ -166,8 +171,39 @@ function ScoreButtons({ item, value, locked, onPick }) {
   );
 }
 
+// ─── 準備中の画面 ───────────────────────────────────────────────
+function ComingSoon() {
+  return (
+    <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:'24px' }}>
+      <div style={{ maxWidth:'420px', width:'100%', textAlign:'center' }}>
+        <div style={{ fontSize:'40px', marginBottom:'14px' }}>🧴</div>
+        <h1 style={{ fontSize:'22px', fontWeight:700, color:C.text, margin:'0 0 10px', letterSpacing:'0.04em' }}>
+          Coming Soon
+        </h1>
+        <div style={{ fontSize:'14px', fontWeight:600, color:C.text, marginBottom:'8px' }}>
+          シャンプーチェック
+        </div>
+        <div style={{ fontSize:'13px', color:C.mute, lineHeight:1.9, marginBottom:'26px' }}>
+          ただいま準備中です。<br />
+          公開まで少しお待ちください。
+        </div>
+        <a href="/" style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'11px 22px', borderRadius:'10px',
+          border:`1px solid ${C.line}`, background:C.card, color:C.text, fontSize:'13px', fontWeight:600, textDecoration:'none' }}>
+          <ChevronLeft size={14} /> シフト管理に戻る
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ─── 本体 ───────────────────────────────────────────────────────
 export default function ShampooCheckApp() {
+  const preview = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1';
+  if (COMING_SOON && !preview) return <ComingSoon />;
+  return <ShampooCheckInner />;
+}
+
+function ShampooCheckInner() {
   const [data, setData]       = useState({ version:1, results:{} });
   const [staff, setStaff]     = useState([]);
   const [masterPw, setMasterPw] = useState('');

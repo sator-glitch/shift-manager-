@@ -5,6 +5,7 @@ import { ChevronLeft, Plus, Trash2, Star, Search, BarChart2, ClipboardList } fro
 const DATA_KEY       = 'shampoo_check_v1';
 const CURRICULUM_KEY = 'curriculum_v2';            // スタッフ一覧を読むだけ
 const MASTER_PW_KEY  = 'shift_manager_master_password_v1';
+const WORKSPACES_KEY = 'shift_manager_workspaces_v1';      // 採点する人の候補（トレーナー）を集める
 
 // ─── 公開前フラグ ───────────────────────────────────────────────
 // true の間は「準備中」の画面だけを出す。
@@ -206,6 +207,7 @@ export default function ShampooCheckApp() {
 function ShampooCheckInner() {
   const [data, setData]       = useState({ version:1, results:{} });
   const [staff, setStaff]     = useState([]);
+  const [trainers, setTrainers] = useState([]);
   const [masterPw, setMasterPw] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -224,6 +226,23 @@ function ShampooCheckInner() {
       setStaff((v?.staff || []).filter(s => !s.retired));
     } catch (e) { setErr('スタッフ一覧の読み込みに失敗しました'); }
     try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
+    // 勉強会ページに登録されているトレーナーを全ページ分あつめる（「○○（月火）」の曜日は外す）
+    try {
+      const r = await window.storage.get(WORKSPACES_KEY);
+      const list = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+      const names = new Set();
+      for (const w of (list || [])) {
+        try {
+          const d = await window.storage.get('shift_manager_workspace_' + w.id);
+          const ws = typeof d.value === 'string' ? JSON.parse(d.value) : d.value;
+          (ws?.trainers || []).forEach(t => {
+            const n = String(t.name || '').replace(/[（(].*$/, '').trim();
+            if (n) names.add(n);
+          });
+        } catch (e) {}
+      }
+      setTrainers([...names].sort());
+    } catch (e) {}
     setLoading(false);
   })(); }, []);
 
@@ -287,7 +306,7 @@ function ShampooCheckInner() {
       )}
 
       {view.name === 'list'   && <ListView results={results} staffById={staffById} onOpen={id => setView({ name:'detail', id })} />}
-      {view.name === 'form'   && <FormView staff={staff} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />}
+      {view.name === 'form'   && <FormView staff={staff} trainers={trainers} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />}
       {view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results} staffById={staffById} masterPw={masterPw}
                                    onBack={() => setView({ name:'list' })}
                                    onEdit={rec => setView({ name:'form', base: rec })}
@@ -377,9 +396,10 @@ function ListView({ results, staffById, onOpen }) {
 const selStyle = { padding:'9px 10px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text };
 
 // ─── 採点フォーム ───────────────────────────────────────────────
-function FormView({ staff, base, onCancel, onSave, saving }) {
+function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
   const [staffId, setStaffId] = useState(base?.staffId || '');
   const [scorer, setScorer]   = useState(base?.scorer || '');
+  const [scorerOther, setScorerOther] = useState('');
   const [date, setDate]       = useState(base?.date || today());
   const [memo, setMemo]       = useState(base?.memo || '');
   const [scores, setScores]   = useState(base?.scores || {});
@@ -398,14 +418,16 @@ function FormView({ staff, base, onCancel, onSave, saving }) {
       return next;
     });
   }
+  const scorerName = scorer === '__other__' ? scorerOther.trim() : scorer.trim();
+
   function submit() {
-    if (!staffId) { alert('採点する人を選んでください'); return; }
-    if (!scorer.trim()) { alert('採点者の名前を入れてください'); return; }
+    if (!staffId) { alert('チェックを受ける人を選んでください'); return; }
+    if (!scorerName) { alert('チェックする人を選んでください'); return; }
     if (res.unscored > 0) { alert(`未入力が${res.unscored}項目あります`); return; }
     onSave({
       id: base?.id || uid(), itemSet: ITEM_SET,
       staffId, staffName: person?.name || '', store: person?.store || '', cohort: person?.cohort || '',
-      scorer: scorer.trim(), date, memo: memo.trim(), scores,
+      scorer: scorerName, date, memo: memo.trim(), scores,
       total: res.total, pass: res.pass,
       reasons: res.reasons.map(r => r.text),
       updatedAt: new Date().toISOString(),
@@ -415,9 +437,11 @@ function FormView({ staff, base, onCancel, onSave, saving }) {
   return (
     <>
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'14px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:'10px' }}>
-          <label style={lblStyle}>採点する人
-            <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%', marginTop:'4px' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:'12px' }}>
+          <label style={lblStyle}>
+            <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>シャンプーをする人</span>
+            <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>チェックを受ける側</span>
+            <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
               {cohorts.map(c => (
                 <optgroup key={c} label={c}>
@@ -427,15 +451,41 @@ function FormView({ staff, base, onCancel, onSave, saving }) {
               ))}
             </select>
           </label>
-          <label style={lblStyle}>採点者
-            <input value={scorer} onChange={e => setScorer(e.target.value)} placeholder="名前を入力"
-              style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+          <label style={lblStyle}>
+            <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>点数をつける人</span>
+            <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
+            <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
+              <option value="">選んでください</option>
+              {trainers.length > 0 && (
+                <optgroup label="トレーナー">
+                  {trainers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
+                </optgroup>
+              )}
+              {cohorts.map(c => (
+                <optgroup key={c} label={c}>
+                  {staff.filter(s => s.cohort === c).map(s =>
+                    <option key={'s-' + s.id} value={s.name}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
+                </optgroup>
+              ))}
+              <option value="__other__">その他（手入力）</option>
+            </select>
+            {scorer === '__other__' && (
+              <input value={scorerOther} onChange={e => setScorerOther(e.target.value)} placeholder="名前を入力"
+                style={{ ...selStyle, width:'100%', marginTop:'6px', boxSizing:'border-box' }} />
+            )}
           </label>
-          <label style={lblStyle}>実施日
+          <label style={lblStyle}>
+            <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>実施日</span>
+            <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>&nbsp;</span>
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+              style={{ ...selStyle, width:'100%', boxSizing:'border-box' }} />
           </label>
         </div>
+        {staffId && scorerName && (
+          <div style={{ marginTop:'12px', padding:'9px 12px', borderRadius:'9px', background:C.soft, fontSize:'12px', color:C.text }}>
+            <b>{person?.name}</b> さんのシャンプーを <b>{scorerName}</b> さんが採点します
+          </div>
+        )}
       </div>
 
       <div style={{ position:'sticky', top:0, zIndex:5, background:C.bg, paddingBottom:'8px', marginBottom:'6px' }}>

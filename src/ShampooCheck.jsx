@@ -143,6 +143,11 @@ function itemLabel(it, kind) {
 
 // ─── 店舗 ───────────────────────────────────────────────────────
 const STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'GINZA U', 'KICHIJOJI'];
+// 店舗の並び順にそろえる（店舗なしは最後）
+function sortMembers(members, stores) {
+  const rank = n => { const i = stores.indexOf(n); return i < 0 ? stores.length : i; };
+  return [...members].sort((a, b) => rank(a.store) - rank(b.store));
+}
 
 // ─── 合否判定 ────────────────────────────────────────────────────
 // ルール（紙のチェック表どおり）
@@ -272,6 +277,14 @@ function ShampooCheckInner() {
 
     // 人員がまだ無ければ、カリキュラムと勉強会ページから初回だけ取り込む。
     // 以後はこのアプリの中で追加・編集・削除する（カリキュラムは書き換えない）。
+    if (d.people && !d.people.members && d.people.subjects) {
+      // 旧形式（受ける人／つける人の2本立て）を、店舗ごとの1本のリストにまとめる
+      const members = [], seen = new Set();
+      (d.people.subjects || []).forEach(x => { if (!seen.has(x.name)) { seen.add(x.name); members.push({ id:x.id, name:x.name, store:x.store || '' }); } });
+      (d.people.scorers  || []).forEach(x => { if (!seen.has(x.name)) { seen.add(x.name); members.push({ id:x.id, name:x.name, store:'' }); } });
+      d = { ...d, people: { stores: [...STORES], members: sortMembers(members, STORES) } };
+      try { await window.storage.set(DATA_KEY, JSON.stringify(d)); } catch (e) {}
+    }
     if (!d.people) {
       const seeded = await seedPeople();
       if (seeded) {
@@ -284,12 +297,15 @@ function ShampooCheckInner() {
   })(); }, []);
 
   async function seedPeople() {
-    const subjects = [], scorers = [];
+    const members = [], seen = new Set();
     try {
       const r = await window.storage.get(CURRICULUM_KEY);
       const v = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
-      (v?.staff || []).filter(x => !x.retired).forEach(x =>
-        subjects.push({ id: x.id, name: x.name, store: x.store || '', group: x.cohort || 'その他' }));
+      (v?.staff || []).filter(x => !x.retired).forEach(x => {
+        if (seen.has(x.name)) return;
+        seen.add(x.name);
+        members.push({ id: x.id, name: x.name, store: x.store || '' });
+      });
     } catch (e) { setErr('カリキュラムからスタッフを取り込めませんでした'); return null; }
     try {
       const r = await window.storage.get(WORKSPACES_KEY);
@@ -305,9 +321,13 @@ function ShampooCheckInner() {
           });
         } catch (e) {}
       }
-      [...names].sort().forEach(n => scorers.push({ id: uid(), name: n }));
+      [...names].sort().forEach(n => {
+        if (seen.has(n)) return;
+        seen.add(n);
+        members.push({ id: uid(), name: n, store: '' });   // 店舗は後から割り振る
+      });
     } catch (e) {}
-    return { subjects, scorers };
+    return { stores: [...STORES], members: sortMembers(members, STORES) };
   }
 
   // 保存は results をキー単位でマージし、他端末の入力を消さない
@@ -327,7 +347,7 @@ function ShampooCheckInner() {
     setSaving(false);
   }, []);
 
-  const people  = data.people || { subjects: [], scorers: [] };
+  const people  = data.people || { stores: [...STORES], members: [] };
   const results = useMemo(() => Object.values(data.results || {})
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')), [data]);
 
@@ -493,14 +513,11 @@ function FormView({ people, base, onCancel, onSave, saving }) {
   const [memo, setMemo]       = useState(base?.memo || '');
   const [scores, setScores]   = useState(base?.scores || {});
 
-  const subjects = people.subjects || [];
-  const scorers  = people.scorers  || [];
-  const person   = subjects.find(s => s.id === staffId);
-  const res      = judge(scores);
-  const groups   = [...new Set(subjects.map(s => s.group || 'その他'))].sort();
-  // 受ける人にも載っている名前は、下の学年グループに出すので採点者の先頭グループからは外す
-  const subjectNames  = new Set(subjects.map(s => s.name));
-  const outsideScorers = scorers.map(x => x.name).filter(n => !subjectNames.has(n));
+  const members = people.members || [];
+  const person  = members.find(s => s.id === staffId);
+  const res     = judge(scores);
+  // 人員登録で並べた店舗の順に出す。店舗なしは最後
+  const groups  = [...(people.stores || []), ''].filter(g => members.some(m => (m.store || '') === g));
 
   function pick(item, v) {
     setScores(prev => {
@@ -521,7 +538,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
     if (res.unscored > 0) { alert(`未入力が${res.unscored}項目あります`); return; }
     onSave({
       id: base?.id || uid(), itemSet: ITEM_SET,
-      staffId, staffName: person?.name || '', store: person?.store || '', cohort: person?.group || '', kind,
+      staffId, staffName: person?.name || '', store: person?.store || '', kind,
       scorer: scorerName, date, memo: memo.trim(), scores,
       total: res.total, pass: res.pass,
       reasons: res.reasons.map(r => r.text),
@@ -539,9 +556,9 @@ function FormView({ people, base, onCancel, onSave, saving }) {
             <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
               {groups.map(c => (
-                <optgroup key={c} label={c}>
-                  {subjects.filter(s => (s.group || 'その他') === c).map(s =>
-                    <option key={s.id} value={s.id}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
+                <optgroup key={c} label={c || '店舗なし'}>
+                  {members.filter(s => (s.store || '') === c).map(s =>
+                    <option key={s.id} value={s.id}>{s.name}</option>)}
                 </optgroup>
               ))}
             </select>
@@ -551,15 +568,10 @@ function FormView({ people, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
             <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {outsideScorers.length > 0 && (
-                <optgroup label="スタイリスト・トレーナー">
-                  {outsideScorers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
-                </optgroup>
-              )}
               {groups.map(c => (
-                <optgroup key={c} label={c}>
-                  {subjects.filter(s => (s.group || 'その他') === c).map(s =>
-                    <option key={'s-' + s.id} value={s.name}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
+                <optgroup key={c} label={c || '店舗なし'}>
+                  {members.filter(s => (s.store || '') === c).map(s =>
+                    <option key={'s-' + s.id} value={s.name}>{s.name}</option>)}
                 </optgroup>
               ))}
               <option value="__other__">その他（手入力）</option>
@@ -819,129 +831,172 @@ function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
 }
 const linkBtn = { background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline', padding:'4px' };
 
-// ─── 人員登録 ───────────────────────────────────────────────────
+
+// ─── 人員登録（店舗ごと）───────────────────────────────────────
 function PeopleView({ people, results, onSave, saving }) {
-  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(people || { subjects:[], scorers:[] })));
-  const [newSub, setNewSub]   = useState({ name:'', store:'', group:'' });
-  const [newScorer, setNewScorer] = useState('');
+  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
+  const [newName, setNewName]   = useState({});   // 店舗ごとの入力欄
+  const [newStore, setNewStore] = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(people);
 
-  const groups = [...new Set((draft.subjects || []).map(s => s.group || 'その他'))].sort();
-  // 採点履歴がある人は消すと履歴の名前が辿れなくなるので件数を出す
-  const usedSubject = {}, usedScorer = {};
-  (results || []).forEach(r => {
-    usedSubject[r.staffId] = (usedSubject[r.staffId] || 0) + 1;
-    usedScorer[r.scorer]   = (usedScorer[r.scorer]   || 0) + 1;
-  });
+  const stores  = draft.stores || [];
+  const members = draft.members || [];
+  const used = {};
+  (results || []).forEach(r => { used[r.staffId] = (used[r.staffId] || 0) + 1; });
 
-  function setSub(id, patch) {
-    setDraft(d => ({ ...d, subjects: d.subjects.map(s => s.id === id ? { ...s, ...patch } : s) }));
+  const groups = [...stores, ''];   // 最後は店舗なし
+  const inStore = st => members.filter(m => (m.store || '') === st);
+
+  // ── 人 ──
+  function setMember(id, patch) {
+    setDraft(d => ({ ...d, members: d.members.map(m => m.id === id ? { ...m, ...patch } : m) }));
   }
-  function delSub(s) {
-    const n = usedSubject[s.id] || 0;
+  function moveMember(id, dir) {
+    setDraft(d => {
+      const arr = [...d.members];
+      const i = arr.findIndex(m => m.id === id);
+      if (i < 0) return d;
+      const st = arr[i].store || '';
+      // 同じ店舗の中で、ひとつ上（下）の人と入れ替える
+      let j = i + dir;
+      while (j >= 0 && j < arr.length && (arr[j].store || '') !== st) j += dir;
+      if (j < 0 || j >= arr.length) return d;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      return { ...d, members: arr };
+    });
+  }
+  function delMember(m) {
+    const n = used[m.id] || 0;
     if (!confirm(n > 0
-      ? `${s.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
-      : `${s.name}さんを一覧から消します。よろしいですか。`)) return;
-    setDraft(d => ({ ...d, subjects: d.subjects.filter(x => x.id !== s.id) }));
+      ? `${m.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
+      : `${m.name}さんを一覧から消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, members: d.members.filter(x => x.id !== m.id) }));
   }
-  function addSub() {
-    const name = newSub.name.trim();
+  function addMember(st) {
+    const name = (newName[st] || '').trim();
     if (!name) return;
-    if (draft.subjects.some(s => s.name === name)) { alert('同じ名前がすでに登録されています'); return; }
-    setDraft(d => ({ ...d, subjects: [...d.subjects, { id: uid(), name, store: newSub.store, group: newSub.group.trim() || 'その他' }] }));
-    setNewSub({ name:'', store:'', group: newSub.group });
+    if (members.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
+    setDraft(d => {
+      const arr = [...d.members];
+      // その店舗の最後に入れる
+      let last = -1;
+      arr.forEach((m, i) => { if ((m.store || '') === st) last = i; });
+      arr.splice(last < 0 ? arr.length : last + 1, 0, { id: uid(), name, store: st });
+      return { ...d, members: arr };
+    });
+    setNewName(v => ({ ...v, [st]: '' }));
   }
-  function setScorerName(id, name) {
-    setDraft(d => ({ ...d, scorers: d.scorers.map(s => s.id === id ? { ...s, name } : s) }));
+
+  // ── 店舗 ──
+  function renameStore(i, name) {
+    setDraft(d => {
+      const olds = d.stores[i];
+      const ss = [...d.stores]; ss[i] = name;
+      return { ...d, stores: ss, members: d.members.map(m => m.store === olds ? { ...m, store: name } : m) };
+    });
   }
-  function delScorer(s) {
-    const n = usedScorer[s.name] || 0;
-    if (!confirm(n > 0
-      ? `${s.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
-      : `${s.name}さんを一覧から消します。よろしいですか。`)) return;
-    setDraft(d => ({ ...d, scorers: d.scorers.filter(x => x.id !== s.id) }));
+  function moveStore(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= stores.length) return;
+    setDraft(d => {
+      const ss = [...d.stores]; [ss[i], ss[j]] = [ss[j], ss[i]];
+      return { ...d, stores: ss, members: sortMembers(d.members, ss) };
+    });
   }
-  function addScorer() {
-    const name = newScorer.trim();
+  function delStore(i) {
+    const name = stores[i];
+    const n = inStore(name).length;
+    if (n > 0) { alert(`${name}には${n}名います。先に別の店舗へ移すか削除してください。`); return; }
+    if (!confirm(`店舗「${name}」を消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, stores: d.stores.filter((_, k) => k !== i) }));
+  }
+  function addStore() {
+    const name = newStore.trim();
     if (!name) return;
-    if (draft.scorers.some(s => s.name === name)) { alert('同じ名前がすでに登録されています'); return; }
-    setDraft(d => ({ ...d, scorers: [...d.scorers, { id: uid(), name }] }));
-    setNewScorer('');
+    if (stores.includes(name)) { alert('同じ店舗がすでにあります'); return; }
+    setDraft(d => ({ ...d, stores: [...d.stores, name] }));
+    setNewStore('');
   }
+
+  const arrowBtn = { width:'26px', height:'22px', borderRadius:'6px', border:`1px solid ${C.line}`,
+    background:'#FFF', color:C.mute, cursor:'pointer', fontSize:'10px', lineHeight:1, padding:0 };
 
   return (
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
-        ここで追加・編集・削除した内容はシャンプーチェックの中だけで使われます。カリキュラムやシフトには影響しません。
+        ここで登録した人は、シャンプーをする側としても点数をつける側としても選べます。<br />
+        追加・編集・削除・並べ替えはシャンプーチェックの中だけに反映され、カリキュラムやシフトは書き換えません。
       </div>
 
-      {/* シャンプーをする人 */}
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'14px', overflow:'hidden' }}>
-        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
-          シャンプーをする人<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.subjects.length}名</span>
-        </div>
-        {groups.map(g => (
-          <div key={g}>
-            <div style={{ padding:'7px 14px', fontSize:'11px', fontWeight:700, color:C.mute, background:'#FBF9F5', borderTop:'1px solid #F2EEE5' }}>{g}</div>
-            {draft.subjects.filter(s => (s.group || 'その他') === g).map(s => (
-              <div key={s.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 14px', borderTop:'1px solid #F7F4EE' }}>
-                <input value={s.name} onChange={e => setSub(s.id, { name: e.target.value })}
-                  style={{ flex:'1 1 120px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-                <select value={s.store || ''} onChange={e => setSub(s.id, { store: e.target.value })}
-                  style={{ ...selStyle, flex:'0 0 128px', padding:'8px 8px' }}>
+      {/* 店舗ごとの人 */}
+      {groups.map(st => {
+        const list = inStore(st);
+        if (st === '' && list.length === 0) return null;
+        const i = stores.indexOf(st);
+        return (
+          <div key={st || '__none__'} style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px', background:C.soft }}>
+              {st === '' ? (
+                <div style={{ flex:1, fontSize:'13px', fontWeight:700, color:C.mute }}>店舗なし</div>
+              ) : (
+                <>
+                  <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
+                    <button onClick={() => moveStore(i, -1)} disabled={i === 0} style={{ ...arrowBtn, opacity: i === 0 ? 0.3 : 1 }}>▲</button>
+                    <button onClick={() => moveStore(i, 1)} disabled={i === stores.length - 1} style={{ ...arrowBtn, opacity: i === stores.length - 1 ? 0.3 : 1 }}>▼</button>
+                  </div>
+                  <input value={st} onChange={e => renameStore(i, e.target.value)}
+                    style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', fontWeight:700, background:'#FFF' }} />
+                  <button onClick={() => delStore(i)} title="この店舗を削除"
+                    style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
+              <span style={{ fontSize:'11px', color:C.mute, fontWeight:600, flexShrink:0 }}>{list.length}名</span>
+            </div>
+
+            {list.map((m, k) => (
+              <div key={m.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px', borderTop:'1px solid #F7F4EE' }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:'2px', flexShrink:0 }}>
+                  <button onClick={() => moveMember(m.id, -1)} disabled={k === 0} style={{ ...arrowBtn, opacity: k === 0 ? 0.3 : 1 }}>▲</button>
+                  <button onClick={() => moveMember(m.id, 1)} disabled={k === list.length - 1} style={{ ...arrowBtn, opacity: k === list.length - 1 ? 0.3 : 1 }}>▼</button>
+                </div>
+                <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
+                  style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+                <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
+                  style={{ ...selStyle, flex:'0 0 120px', padding:'8px 6px' }}>
                   <option value="">店舗なし</option>
-                  {STORES.map(st => <option key={st} value={st}>{st}</option>)}
+                  {stores.map(x => <option key={x} value={x}>{x}</option>)}
                 </select>
-                <button onClick={() => delSub(s)} title="削除"
-                  style={{ flexShrink:0, width:'34px', height:'34px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  <Trash2 size={14} />
+                <button onClick={() => delMember(m)} title="削除"
+                  style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <Trash2 size={13} />
                 </button>
               </div>
             ))}
-          </div>
-        ))}
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 14px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5', flexWrap:'wrap' }}>
-          <input value={newSub.name} onChange={e => setNewSub({ ...newSub, name: e.target.value })} placeholder="名前"
-            onKeyDown={e => e.key === 'Enter' && addSub()}
-            style={{ flex:'1 1 120px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <select value={newSub.store} onChange={e => setNewSub({ ...newSub, store: e.target.value })} style={{ ...selStyle, flex:'0 0 128px', padding:'8px 8px' }}>
-            <option value="">店舗なし</option>
-            {STORES.map(st => <option key={st} value={st}>{st}</option>)}
-          </select>
-          <input value={newSub.group} onChange={e => setNewSub({ ...newSub, group: e.target.value })} placeholder="2026年入社"
-            style={{ flex:'0 0 110px', padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <button onClick={addSub} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            <Plus size={13} /> 追加
-          </button>
-        </div>
-      </div>
 
-      {/* 点数をつける人 */}
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'14px', overflow:'hidden' }}>
-        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
-          点数をつける人<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.scorers.length}名</span>
-        </div>
-        <div style={{ padding:'7px 14px', fontSize:'11px', color:C.mute, borderTop:'1px solid #F2EEE5' }}>
-          ここに載っていなくても、上の「シャンプーをする人」は全員そのまま採点者として選べます。
-        </div>
-        {draft.scorers.map(s => (
-          <div key={s.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 14px', borderTop:'1px solid #F7F4EE' }}>
-            <input value={s.name} onChange={e => setScorerName(s.id, e.target.value)}
-              style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-            <button onClick={() => delScorer(s)} title="削除"
-              style={{ flexShrink:0, width:'34px', height:'34px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-              <Trash2 size={14} />
-            </button>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
+              <input value={newName[st] || ''} onChange={e => setNewName(v => ({ ...v, [st]: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addMember(st)} placeholder={st ? `${st}に追加` : '店舗なしに追加'}
+                style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+              <button onClick={() => addMember(st)}
+                style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+                <Plus size={13} /> 追加
+              </button>
+            </div>
           </div>
-        ))}
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 14px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
-          <input value={newScorer} onChange={e => setNewScorer(e.target.value)} placeholder="名前"
-            onKeyDown={e => e.key === 'Enter' && addScorer()}
-            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <button onClick={addScorer} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            <Plus size={13} /> 追加
-          </button>
-        </div>
+        );
+      })}
+
+      {/* 店舗を足す */}
+      <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'12px', borderRadius:'12px', border:`1px dashed ${C.line}`, background:'transparent', marginBottom:'16px' }}>
+        <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
+          placeholder="新しい店舗の名前"
+          style={{ flex:1, minWidth:0, padding:'9px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF' }} />
+        <button onClick={addStore}
+          style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'9px 16px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+          <Plus size={13} /> 店舗を追加
+        </button>
       </div>
 
       <div style={{ position:'sticky', bottom:'10px', display:'flex', gap:'8px', alignItems:'center' }}>

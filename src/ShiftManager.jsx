@@ -1405,6 +1405,16 @@ export default function ShiftManager() {
             店舗（シフト）を選んでください
           </div>
 
+          {/* 他のアプリへのリンク */}
+          <div className="no-print" style={{ display:'flex', gap:'8px', justifyContent:'center', flexWrap:'wrap', marginBottom:'22px' }}>
+            <a href="/curriculum.html" style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'9px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#1F1C18', fontSize:'12px', fontWeight:600, textDecoration:'none' }}>
+              カリキュラム管理
+            </a>
+            <a href="/shampoo.html" style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 16px', borderRadius:'9px', border:'1px solid #E2DCCC', background:'#FFFFFF', color:'#1F1C18', fontSize:'12px', fontWeight:600, textDecoration:'none' }}>
+              シャンプーチェック
+            </a>
+          </div>
+
           {restoreMessage && (
             <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '10px', background: '#EAF1ED', border: '1px solid #C9DDD0', fontSize: '12px', color: '#2B4A3A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
               <span>{restoreMessage}</span>

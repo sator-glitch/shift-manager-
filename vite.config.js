@@ -10,6 +10,7 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         curriculum: resolve(__dirname, 'curriculum.html'),
         backfill: resolve(__dirname, 'backfill.html'),
+        shampoo: resolve(__dirname, 'shampoo.html'),
       },
     },
   },

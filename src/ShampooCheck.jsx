@@ -98,7 +98,7 @@ const SECTIONS = [
     { id:'e3', t:'耳周りに泡は残っていなかったか' },
   ]},
   { key: 'f', name: '全体', items: [
-    { id:'f1',  t:'タイムに入っているか（ショート10分／ロング13分）', b:true },
+    { id:'f1',  t:'タイムに入っているか', time:true, b:true },
     { id:'f2',  t:'全体的に単調じゃなかったか', s:true },
     { id:'f3',  t:'鼻息はかかっていなかったか' },
     { id:'f4',  t:'全体的に流れはスムーズだったか' },
@@ -128,6 +128,21 @@ const MAX_TOTAL  = ALL_ITEMS.length * 3;   // 180
 const PASS_LINE  = 165;
 const SCORE_LABEL = { 0:'全くダメ', 1:'要練習！', 2:'まあまあok！', 3:'良い感じ！' };
 const SECTION_MAX = Object.fromEntries(SECTIONS.map(s => [s.key, s.items.length * 3]));
+
+// ─── シャンプーの種類 ───────────────────────────────────────────
+const KINDS = [
+  { key:'short', label:'ショート', time:'10分' },
+  { key:'long',  label:'ロング',  time:'13分' },
+];
+function kindLabel(k) { const v = KINDS.find(x => x.key === k); return v ? v.label : '―'; }
+function itemLabel(it, kind) {
+  if (!it.time) return it.t;
+  const v = KINDS.find(x => x.key === kind);
+  return v ? `${it.t}（${v.label}${v.time}）` : `${it.t}（ショート10分／ロング13分）`;
+}
+
+// ─── 店舗 ───────────────────────────────────────────────────────
+const STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'GINZA U', 'KICHIJOJI'];
 
 // ─── 合否判定 ────────────────────────────────────────────────────
 // ルール（紙のチェック表どおり）
@@ -238,56 +253,72 @@ export default function ShampooCheckApp() {
 }
 
 function ShampooCheckInner() {
-  const [data, setData]       = useState({ version:1, results:{} });
-  const [staff, setStaff]     = useState([]);
-  const [trainers, setTrainers] = useState([]);
+  const [data, setData]       = useState({ version:1, results:{}, people:null });
   const [masterPw, setMasterPw] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
+  const [tab, setTab]         = useState('check');           // check | people
   const [view, setView]       = useState({ name:'list' });   // list | form | detail
   const [err, setErr]         = useState('');
 
   useEffect(() => { (async () => {
+    let d = { version:1, results:{}, people:null };
     try {
       const r = await window.storage.get(DATA_KEY);
       const v = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
-      if (v && typeof v === 'object') setData({ version:1, results:{}, ...v });
+      if (v && typeof v === 'object') d = { version:1, results:{}, people:null, ...v };
     } catch (e) { /* 初回は未作成 */ }
+    try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
+
+    // 人員がまだ無ければ、カリキュラムと勉強会ページから初回だけ取り込む。
+    // 以後はこのアプリの中で追加・編集・削除する（カリキュラムは書き換えない）。
+    if (!d.people) {
+      const seeded = await seedPeople();
+      if (seeded) {
+        d = { ...d, people: seeded };
+        try { await window.storage.set(DATA_KEY, JSON.stringify(d)); } catch (e) {}
+      }
+    }
+    setData(d);
+    setLoading(false);
+  })(); }, []);
+
+  async function seedPeople() {
+    const subjects = [], scorers = [];
     try {
       const r = await window.storage.get(CURRICULUM_KEY);
       const v = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
-      setStaff((v?.staff || []).filter(s => !s.retired));
-    } catch (e) { setErr('スタッフ一覧の読み込みに失敗しました'); }
-    try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
-    // 勉強会ページに登録されているトレーナーを全ページ分あつめる（「○○（月火）」の曜日は外す）
+      (v?.staff || []).filter(x => !x.retired).forEach(x =>
+        subjects.push({ id: x.id, name: x.name, store: x.store || '', group: x.cohort || 'その他' }));
+    } catch (e) { setErr('カリキュラムからスタッフを取り込めませんでした'); return null; }
     try {
       const r = await window.storage.get(WORKSPACES_KEY);
       const list = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
       const names = new Set();
       for (const w of (list || [])) {
         try {
-          const d = await window.storage.get('shift_manager_workspace_' + w.id);
-          const ws = typeof d.value === 'string' ? JSON.parse(d.value) : d.value;
+          const dd = await window.storage.get('shift_manager_workspace_' + w.id);
+          const ws = typeof dd.value === 'string' ? JSON.parse(dd.value) : dd.value;
           (ws?.trainers || []).forEach(t => {
             const n = normName(t.name);
             if (n && !NAME_EXCLUDE.includes(n)) names.add(n);
           });
         } catch (e) {}
       }
-      setTrainers([...names].sort());   // カリキュラム在籍との重複は描画時に外す
+      [...names].sort().forEach(n => scorers.push({ id: uid(), name: n }));
     } catch (e) {}
-    setLoading(false);
-  })(); }, []);
+    return { subjects, scorers };
+  }
 
   // 保存は results をキー単位でマージし、他端末の入力を消さない
   const persist = useCallback(async (mutate) => {
     setSaving(true);
     try {
-      let remote = { version:1, results:{} };
+      let remote = { version:1, results:{}, people:null };
       try {
         const r = await window.storage.get(DATA_KEY);
         const v = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
-        if (v && typeof v === 'object') remote = { version:1, results:{}, ...v };
+        if (v && typeof v === 'object') remote = { version:1, results:{}, people:null, ...v };
       } catch (e) {}
       const next = mutate(remote);
       await window.storage.set(DATA_KEY, JSON.stringify(next));
@@ -296,8 +327,8 @@ function ShampooCheckInner() {
     setSaving(false);
   }, []);
 
-  const staffById = useMemo(() => Object.fromEntries(staff.map(s => [s.id, s])), [staff]);
-  const results   = useMemo(() => Object.values(data.results || {})
+  const people  = data.people || { subjects: [], scorers: [] };
+  const results = useMemo(() => Object.values(data.results || {})
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')), [data]);
 
   async function saveResult(rec) {
@@ -308,12 +339,15 @@ function ShampooCheckInner() {
     await persist(remote => { const rs = { ...remote.results }; delete rs[id]; return { ...remote, results: rs }; });
     setView({ name:'list' });
   }
+  async function savePeople(next) {
+    await persist(remote => ({ ...remote, people: next }));
+  }
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
   return (
     <Shell>
-      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px', flexWrap:'wrap', marginBottom:'18px' }}>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px', flexWrap:'wrap', marginBottom:'14px' }}>
         <div>
           <a href="/" style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, textDecoration:'none', marginBottom:'4px' }}>
             <ChevronLeft size={12} /> シフト管理に戻る
@@ -323,7 +357,7 @@ function ShampooCheckInner() {
             {saving ? '保存中…' : `${MAX_TOTAL}点満点／${PASS_LINE}点以上で合格`}
           </div>
         </div>
-        {view.name === 'list' && (
+        {tab === 'check' && view.name === 'list' && (
           <button onClick={() => setView({ name:'form' })}
             style={{ display:'flex', alignItems:'center', gap:'6px', padding:'10px 18px', borderRadius:'10px',
               border:'none', background:C.text, color:'#FFF', fontWeight:600, fontSize:'13px', cursor:'pointer' }}>
@@ -332,15 +366,29 @@ function ShampooCheckInner() {
         )}
       </div>
 
+      <div style={{ display:'flex', gap:'4px', background:C.soft, borderRadius:'10px', padding:'4px', marginBottom:'16px', width:'fit-content' }}>
+        {[{ key:'check', label:'採点', icon:ClipboardList }, { key:'people', label:'人員登録', icon:Users }].map(({ key, label, icon:Icon }) => (
+          <button key={key} onClick={() => { setTab(key); setView({ name:'list' }); }}
+            style={{ display:'flex', alignItems:'center', gap:'6px', padding:'8px 16px', borderRadius:'8px', border:'none',
+              background: tab === key ? '#FFFFFF' : 'transparent', color: tab === key ? C.text : C.mute,
+              fontWeight: tab === key ? 600 : 500, fontSize:'13px', cursor:'pointer',
+              boxShadow: tab === key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none' }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
       {err && (
         <div style={{ marginBottom:'14px', padding:'10px 14px', borderRadius:'10px', background:C.ngBg, color:C.ng, fontSize:'12px' }}>
           {err} <button onClick={() => setErr('')} style={{ marginLeft:'8px', background:'none', border:'none', color:C.ng, cursor:'pointer', textDecoration:'underline' }}>閉じる</button>
         </div>
       )}
 
-      {view.name === 'list'   && <ListView results={results} staffById={staffById} onOpen={id => setView({ name:'detail', id })} />}
-      {view.name === 'form'   && <FormView staff={staff} trainers={trainers} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />}
-      {view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results} staffById={staffById} masterPw={masterPw}
+      {tab === 'people' && <PeopleView people={people} results={results} onSave={savePeople} saving={saving} />}
+
+      {tab === 'check' && view.name === 'list'   && <ListView results={results} onOpen={id => setView({ name:'detail', id })} />}
+      {tab === 'check' && view.name === 'form'   && <FormView people={people} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />}
+      {tab === 'check' && view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results} masterPw={masterPw}
                                    onBack={() => setView({ name:'list' })}
                                    onEdit={rec => setView({ name:'form', base: rec })}
                                    onDelete={deleteResult} />}
@@ -357,16 +405,18 @@ function Shell({ children }) {
 }
 
 // ─── 一覧 ───────────────────────────────────────────────────────
-function ListView({ results, staffById, onOpen }) {
+function ListView({ results, onOpen }) {
   const [q, setQ]         = useState('');
   const [year, setYear]   = useState('all');
   const [store, setStore] = useState('all');
+  const [kind, setKind]   = useState('all');
 
   const years  = useMemo(() => [...new Set(results.map(r => (r.date || '').slice(0,4)).filter(Boolean))].sort().reverse(), [results]);
   const stores = useMemo(() => [...new Set(results.map(r => r.store).filter(Boolean))], [results]);
   const shown  = results.filter(r =>
     (year  === 'all' || (r.date || '').startsWith(year)) &&
     (store === 'all' || r.store === store) &&
+    (kind  === 'all' || r.kind === kind) &&
     (!q || (r.staffName || '').includes(q) || (r.scorer || '').includes(q)));
 
   const passN = shown.filter(r => r.pass).length;
@@ -386,6 +436,10 @@ function ListView({ results, staffById, onOpen }) {
         <select value={store} onChange={e => setStore(e.target.value)} style={selStyle}>
           <option value="all">すべての店舗</option>
           {stores.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={kind} onChange={e => setKind(e.target.value)} style={selStyle}>
+          <option value="all">ショート・ロング</option>
+          {KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
         </select>
       </div>
 
@@ -409,8 +463,9 @@ function ListView({ results, staffById, onOpen }) {
                   {r.staffName}
                   {r.store && <span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{r.store}</span>}
                 </div>
-                <div style={{ fontSize:'11px', color:C.mute, marginTop:'3px' }}>
-                  {fmtDate(r.date)}{r.scorer ? ` ・ 採点 ${r.scorer}` : ''}
+                <div style={{ fontSize:'11px', color:C.mute, marginTop:'3px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap' }}>
+                  {r.kind && <span style={{ fontWeight:700, color:C.text, background:C.soft, borderRadius:'5px', padding:'1px 6px' }}>{kindLabel(r.kind)}</span>}
+                  <span>{fmtDate(r.date)}{r.scorer ? ` ・ 採点 ${r.scorer}` : ''}</span>
                 </div>
               </div>
               <div style={{ textAlign:'right', flexShrink:0 }}>
@@ -429,20 +484,23 @@ function ListView({ results, staffById, onOpen }) {
 const selStyle = { padding:'9px 10px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text };
 
 // ─── 採点フォーム ───────────────────────────────────────────────
-function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
+function FormView({ people, base, onCancel, onSave, saving }) {
   const [staffId, setStaffId] = useState(base?.staffId || '');
   const [scorer, setScorer]   = useState(base?.scorer || '');
   const [scorerOther, setScorerOther] = useState('');
+  const [kind, setKind]       = useState(base?.kind || '');
   const [date, setDate]       = useState(base?.date || today());
   const [memo, setMemo]       = useState(base?.memo || '');
   const [scores, setScores]   = useState(base?.scores || {});
 
-  const person = staff.find(s => s.id === staffId);
-  const res    = judge(scores);
-  const cohorts = [...new Set(staff.map(s => s.cohort))].sort();
-  // カリキュラムに載っている人は学年のグループに出すので、トレーナー群からは外して重複をなくす
-  const staffNames = new Set(staff.map(s => s.name));
-  const outsideTrainers = (trainers || []).filter(n => !staffNames.has(n));
+  const subjects = people.subjects || [];
+  const scorers  = people.scorers  || [];
+  const person   = subjects.find(s => s.id === staffId);
+  const res      = judge(scores);
+  const groups   = [...new Set(subjects.map(s => s.group || 'その他'))].sort();
+  // 受ける人にも載っている名前は、下の学年グループに出すので採点者の先頭グループからは外す
+  const subjectNames  = new Set(subjects.map(s => s.name));
+  const outsideScorers = scorers.map(x => x.name).filter(n => !subjectNames.has(n));
 
   function pick(item, v) {
     setScores(prev => {
@@ -457,12 +515,13 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
   const scorerName = scorer === '__other__' ? scorerOther.trim() : scorer.trim();
 
   function submit() {
-    if (!staffId) { alert('チェックを受ける人を選んでください'); return; }
-    if (!scorerName) { alert('チェックする人を選んでください'); return; }
+    if (!staffId) { alert('シャンプーをする人を選んでください'); return; }
+    if (!scorerName) { alert('点数をつける人を選んでください'); return; }
+    if (!kind) { alert('ショートかロングかを選んでください'); return; }
     if (res.unscored > 0) { alert(`未入力が${res.unscored}項目あります`); return; }
     onSave({
       id: base?.id || uid(), itemSet: ITEM_SET,
-      staffId, staffName: person?.name || '', store: person?.store || '', cohort: person?.cohort || '',
+      staffId, staffName: person?.name || '', store: person?.store || '', cohort: person?.group || '', kind,
       scorer: scorerName, date, memo: memo.trim(), scores,
       total: res.total, pass: res.pass,
       reasons: res.reasons.map(r => r.text),
@@ -479,9 +538,9 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>チェックを受ける側</span>
             <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {cohorts.map(c => (
+              {groups.map(c => (
                 <optgroup key={c} label={c}>
-                  {staff.filter(s => s.cohort === c).map(s =>
+                  {subjects.filter(s => (s.group || 'その他') === c).map(s =>
                     <option key={s.id} value={s.id}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
                 </optgroup>
               ))}
@@ -492,14 +551,14 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
             <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
               <option value="">選んでください</option>
-              {outsideTrainers.length > 0 && (
+              {outsideScorers.length > 0 && (
                 <optgroup label="スタイリスト・トレーナー">
-                  {outsideTrainers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
+                  {outsideScorers.map(n => <option key={'t-' + n} value={n}>{n}</option>)}
                 </optgroup>
               )}
-              {cohorts.map(c => (
+              {groups.map(c => (
                 <optgroup key={c} label={c}>
-                  {staff.filter(s => s.cohort === c).map(s =>
+                  {subjects.filter(s => (s.group || 'その他') === c).map(s =>
                     <option key={'s-' + s.id} value={s.name}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
                 </optgroup>
               ))}
@@ -517,9 +576,26 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
               style={{ ...selStyle, width:'100%', boxSizing:'border-box' }} />
           </label>
         </div>
-        {staffId && scorerName && (
+        <div style={{ marginTop:'14px' }}>
+          <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>シャンプーの種類</span>
+          <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 7px' }}>タイムの合格ラインが変わります</span>
+          <div style={{ display:'flex', gap:'8px' }}>
+            {KINDS.map(k => {
+              const on = kind === k.key;
+              return (
+                <button key={k.key} onClick={() => setKind(k.key)}
+                  style={{ flex:1, padding:'12px 10px', borderRadius:'10px', cursor:'pointer',
+                    border: on ? 'none' : `1px solid ${C.line}`, background: on ? C.text : '#FFFFFF',
+                    color: on ? '#FFFFFF' : C.mute, fontWeight: on ? 700 : 600, fontSize:'13px' }}>
+                  {k.label}<span style={{ fontSize:'11px', fontWeight:500, marginLeft:'6px', opacity:0.8 }}>{k.time}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {staffId && scorerName && kind && (
           <div style={{ marginTop:'12px', padding:'9px 12px', borderRadius:'9px', background:C.soft, fontSize:'12px', color:C.text }}>
-            <b>{person?.name}</b> さんのシャンプーを <b>{scorerName}</b> さんが採点します
+            <b>{person?.name}</b> さんの<b>{kindLabel(kind)}</b>シャンプーを <b>{scorerName}</b> さんが採点します
           </div>
         )}
       </div>
@@ -552,7 +628,7 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
                   borderTop: idx === 0 ? 'none' : `1px solid #F2EEE5`, background: locked ? '#FAF8F4' : 'transparent' }}>
                   <div style={{ flex:1, minWidth:0, fontSize:'13px', color: locked ? C.mute : C.text, lineHeight:1.45 }}>
                     {it.s && <Star size={11} fill={C.star} color={C.star} style={{ verticalAlign:'-1px', marginRight:'4px' }} />}
-                    {it.t}
+                    {itemLabel(it, kind)}
                     {it.b && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>0か3</span>}
                     {locked && <span style={{ fontSize:'10px', color:C.ok, marginLeft:'6px' }}>自動で3点</span>}
                   </div>
@@ -591,12 +667,14 @@ function FormView({ staff, trainers, base, onCancel, onSave, saving }) {
 const lblStyle = { display:'block', fontSize:'11px', fontWeight:600, color:C.mute };
 
 // ─── 詳細 ───────────────────────────────────────────────────────
-function DetailView({ rec, results, staffById, masterPw, onBack, onEdit, onDelete }) {
+function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
   const [pwInput, setPwInput] = useState('');
   const [asking, setAsking]   = useState(false);
   if (!rec) return <div style={{ color:C.mute }}>この採点は見つかりませんでした。<button onClick={onBack} style={linkBtn}>一覧へ</button></div>;
 
-  const history = results.filter(r => r.staffId === rec.staffId).sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  // 比較はショート同士・ロング同士で行う
+  const history = results.filter(r => r.staffId === rec.staffId && r.kind === rec.kind)
+    .sort((a,b) => (a.date||'').localeCompare(b.date||''));
   const prev    = history.filter(r => (r.date||'') < (rec.date||'')).slice(-1)[0];
 
   function tryDelete() {
@@ -616,7 +694,7 @@ function DetailView({ rec, results, staffById, masterPw, onBack, onEdit, onDelet
           <div>
             <div style={{ fontSize:'17px', fontWeight:700, color:C.text }}>{rec.staffName}</div>
             <div style={{ fontSize:'12px', color:C.mute, marginTop:'3px' }}>
-              {fmtDate(rec.date)}{rec.store ? ` ・ ${rec.store}` : ''}{rec.scorer ? ` ・ 採点 ${rec.scorer}` : ''}
+              {rec.kind ? `${kindLabel(rec.kind)} ・ ` : ''}{fmtDate(rec.date)}{rec.store ? ` ・ ${rec.store}` : ''}{rec.scorer ? ` ・ 採点 ${rec.scorer}` : ''}
             </div>
           </div>
           <div style={{ textAlign:'right' }}>
@@ -682,7 +760,7 @@ function DetailView({ rec, results, staffById, masterPw, onBack, onEdit, onDelet
                 <div key={it.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'7px 14px', borderTop:'1px solid #F2EEE5' }}>
                   <div style={{ flex:1, minWidth:0, fontSize:'12px', color:C.text, lineHeight:1.45 }}>
                     {it.s && <Star size={10} fill={C.star} color={C.star} style={{ verticalAlign:'-1px', marginRight:'4px' }} />}
-                    {it.t}
+                    {itemLabel(it, rec.kind)}
                   </div>
                   {pv !== undefined && pv !== v && (
                     <span style={{ fontSize:'10px', color:C.mute }}>前回 {pv}</span>
@@ -702,7 +780,7 @@ function DetailView({ rec, results, staffById, masterPw, onBack, onEdit, onDelet
       {/* 推移 */}
       {history.length > 1 && (
         <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'14px' }}>
-          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>{rec.staffName}さんの推移</div>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>{rec.staffName}さんの推移（{kindLabel(rec.kind)}）</div>
           <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
             {history.map(h => (
               <div key={h.id} style={{ display:'flex', alignItems:'center', gap:'10px', fontSize:'12px' }}>
@@ -740,3 +818,146 @@ function DetailView({ rec, results, staffById, masterPw, onBack, onEdit, onDelet
   );
 }
 const linkBtn = { background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline', padding:'4px' };
+
+// ─── 人員登録 ───────────────────────────────────────────────────
+function PeopleView({ people, results, onSave, saving }) {
+  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(people || { subjects:[], scorers:[] })));
+  const [newSub, setNewSub]   = useState({ name:'', store:'', group:'' });
+  const [newScorer, setNewScorer] = useState('');
+  const dirty = JSON.stringify(draft) !== JSON.stringify(people);
+
+  const groups = [...new Set((draft.subjects || []).map(s => s.group || 'その他'))].sort();
+  // 採点履歴がある人は消すと履歴の名前が辿れなくなるので件数を出す
+  const usedSubject = {}, usedScorer = {};
+  (results || []).forEach(r => {
+    usedSubject[r.staffId] = (usedSubject[r.staffId] || 0) + 1;
+    usedScorer[r.scorer]   = (usedScorer[r.scorer]   || 0) + 1;
+  });
+
+  function setSub(id, patch) {
+    setDraft(d => ({ ...d, subjects: d.subjects.map(s => s.id === id ? { ...s, ...patch } : s) }));
+  }
+  function delSub(s) {
+    const n = usedSubject[s.id] || 0;
+    if (!confirm(n > 0
+      ? `${s.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
+      : `${s.name}さんを一覧から消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, subjects: d.subjects.filter(x => x.id !== s.id) }));
+  }
+  function addSub() {
+    const name = newSub.name.trim();
+    if (!name) return;
+    if (draft.subjects.some(s => s.name === name)) { alert('同じ名前がすでに登録されています'); return; }
+    setDraft(d => ({ ...d, subjects: [...d.subjects, { id: uid(), name, store: newSub.store, group: newSub.group.trim() || 'その他' }] }));
+    setNewSub({ name:'', store:'', group: newSub.group });
+  }
+  function setScorerName(id, name) {
+    setDraft(d => ({ ...d, scorers: d.scorers.map(s => s.id === id ? { ...s, name } : s) }));
+  }
+  function delScorer(s) {
+    const n = usedScorer[s.name] || 0;
+    if (!confirm(n > 0
+      ? `${s.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
+      : `${s.name}さんを一覧から消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, scorers: d.scorers.filter(x => x.id !== s.id) }));
+  }
+  function addScorer() {
+    const name = newScorer.trim();
+    if (!name) return;
+    if (draft.scorers.some(s => s.name === name)) { alert('同じ名前がすでに登録されています'); return; }
+    setDraft(d => ({ ...d, scorers: [...d.scorers, { id: uid(), name }] }));
+    setNewScorer('');
+  }
+
+  return (
+    <>
+      <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
+        ここで追加・編集・削除した内容はシャンプーチェックの中だけで使われます。カリキュラムやシフトには影響しません。
+      </div>
+
+      {/* シャンプーをする人 */}
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'14px', overflow:'hidden' }}>
+        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
+          シャンプーをする人<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.subjects.length}名</span>
+        </div>
+        {groups.map(g => (
+          <div key={g}>
+            <div style={{ padding:'7px 14px', fontSize:'11px', fontWeight:700, color:C.mute, background:'#FBF9F5', borderTop:'1px solid #F2EEE5' }}>{g}</div>
+            {draft.subjects.filter(s => (s.group || 'その他') === g).map(s => (
+              <div key={s.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 14px', borderTop:'1px solid #F7F4EE' }}>
+                <input value={s.name} onChange={e => setSub(s.id, { name: e.target.value })}
+                  style={{ flex:'1 1 120px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+                <select value={s.store || ''} onChange={e => setSub(s.id, { store: e.target.value })}
+                  style={{ ...selStyle, flex:'0 0 128px', padding:'8px 8px' }}>
+                  <option value="">店舗なし</option>
+                  {STORES.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
+                <button onClick={() => delSub(s)} title="削除"
+                  style={{ flexShrink:0, width:'34px', height:'34px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ))}
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 14px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5', flexWrap:'wrap' }}>
+          <input value={newSub.name} onChange={e => setNewSub({ ...newSub, name: e.target.value })} placeholder="名前"
+            onKeyDown={e => e.key === 'Enter' && addSub()}
+            style={{ flex:'1 1 120px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <select value={newSub.store} onChange={e => setNewSub({ ...newSub, store: e.target.value })} style={{ ...selStyle, flex:'0 0 128px', padding:'8px 8px' }}>
+            <option value="">店舗なし</option>
+            {STORES.map(st => <option key={st} value={st}>{st}</option>)}
+          </select>
+          <input value={newSub.group} onChange={e => setNewSub({ ...newSub, group: e.target.value })} placeholder="2026年入社"
+            style={{ flex:'0 0 110px', padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <button onClick={addSub} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Plus size={13} /> 追加
+          </button>
+        </div>
+      </div>
+
+      {/* 点数をつける人 */}
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'14px', overflow:'hidden' }}>
+        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
+          点数をつける人<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.scorers.length}名</span>
+        </div>
+        <div style={{ padding:'7px 14px', fontSize:'11px', color:C.mute, borderTop:'1px solid #F2EEE5' }}>
+          ここに載っていなくても、上の「シャンプーをする人」は全員そのまま採点者として選べます。
+        </div>
+        {draft.scorers.map(s => (
+          <div key={s.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 14px', borderTop:'1px solid #F7F4EE' }}>
+            <input value={s.name} onChange={e => setScorerName(s.id, e.target.value)}
+              style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+            <button onClick={() => delScorer(s)} title="削除"
+              style={{ flexShrink:0, width:'34px', height:'34px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 14px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
+          <input value={newScorer} onChange={e => setNewScorer(e.target.value)} placeholder="名前"
+            onKeyDown={e => e.key === 'Enter' && addScorer()}
+            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <button onClick={addScorer} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Plus size={13} /> 追加
+          </button>
+        </div>
+      </div>
+
+      <div style={{ position:'sticky', bottom:'10px', display:'flex', gap:'8px', alignItems:'center' }}>
+        <button onClick={() => onSave(draft)} disabled={!dirty || saving}
+          style={{ flex:1, padding:'13px 20px', borderRadius:'10px', border:'none',
+            background: dirty ? C.text : '#D8D2C6', color:'#FFF', fontSize:'13px', fontWeight:700,
+            cursor: dirty ? 'pointer' : 'default' }}>
+          {saving ? '保存中…' : dirty ? '変更を保存する' : '保存済み'}
+        </button>
+        {dirty && (
+          <button onClick={() => setDraft(JSON.parse(JSON.stringify(people)))}
+            style={{ padding:'13px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.mute, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
+            元に戻す
+          </button>
+        )}
+      </div>
+    </>
+  );
+}

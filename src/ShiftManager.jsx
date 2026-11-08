@@ -216,6 +216,7 @@ export default function ShiftManager() {
   const [assistantTypes, setAssistantTypes] = useState(DEFAULT_ASSISTANT_TYPES);
   const [stores, setStores] = useState([]);          // 所属店舗の一覧（空なら機能オフ）
   const [newStore, setNewStore] = useState('');
+  const [newPersonStore, setNewPersonStore] = useState('');  // 人を追加するときの所属店舗
   const [newAssistantType, setNewAssistantType] = useState('');
   const [practiceDays, setPracticeDays] = useState({}); // dateStr -> { sessions: [ {id, category, startTime, endTime, trainerAvail, assistantAvail, assigned} ] }
   const [newName, setNewName] = useState('');
@@ -655,6 +656,7 @@ export default function ShiftManager() {
   function addPerson() {
     if (!newName.trim()) return;
     const person = { id: Date.now().toString(), name: newName.trim() };
+    if (newPersonStore) person.store = newPersonStore;
     if (newType === 'trainer') setTrainers(prev => [...prev, person]);
     else setAssistants(prev => [...prev, person]);
     setNewName('');
@@ -2005,11 +2007,21 @@ export default function ShiftManager() {
                     ) : (
                       <>
                         {isUnlocked && stores.length > 0 && (
-                          <select value={t.store || ''} onChange={e => setPersonStore(t.id, 'trainer', e.target.value)}
-                            style={{ fontSize: '11px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', fontFamily: 'inherit', maxWidth: '110px' }}>
-                            <option value="">店舗なし</option>
-                            {stores.map(st => <option key={st} value={st}>{st}</option>)}
-                          </select>
+                          <div style={{ display: 'flex', gap: '3px' }}>
+                            {stores.map(st => {
+                              const on = t.store === st;
+                              return (
+                                <button key={st} onClick={() => setPersonStore(t.id, 'trainer', on ? '' : st)}
+                                  title={on ? 'もう一度押すと店舗なしに戻します' : st + ' にする'}
+                                  style={{ fontSize: '10px', fontWeight: on ? 800 : 500, padding: '3px 8px', borderRadius: '999px',
+                                    border: '1px solid ' + (on ? storeColor(stores, st) : '#E2DCCC'),
+                                    background: on ? storeColor(stores, st) : '#FFFFFF',
+                                    color: on ? '#FFFFFF' : '#9C9486', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+                                  {st}
+                                </button>
+                              );
+                            })}
+                          </div>
                         )}
                         <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
                           <Download size={14} />
@@ -2067,11 +2079,21 @@ export default function ShiftManager() {
                     ) : (
                       <>
                         {isUnlocked && stores.length > 0 && (
-                          <select value={a.store || ''} onChange={e => setPersonStore(a.id, 'assistant', e.target.value)}
-                            style={{ fontSize: '11px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', fontFamily: 'inherit', maxWidth: '110px' }}>
-                            <option value="">店舗なし</option>
-                            {stores.map(st => <option key={st} value={st}>{st}</option>)}
-                          </select>
+                          <div style={{ display: 'flex', gap: '3px' }}>
+                            {stores.map(st => {
+                              const on = a.store === st;
+                              return (
+                                <button key={st} onClick={() => setPersonStore(a.id, 'assistant', on ? '' : st)}
+                                  title={on ? 'もう一度押すと店舗なしに戻します' : st + ' にする'}
+                                  style={{ fontSize: '10px', fontWeight: on ? 800 : 500, padding: '3px 8px', borderRadius: '999px',
+                                    border: '1px solid ' + (on ? storeColor(stores, st) : '#E2DCCC'),
+                                    background: on ? storeColor(stores, st) : '#FFFFFF',
+                                    color: on ? '#FFFFFF' : '#9C9486', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+                                  {st}
+                                </button>
+                              );
+                            })}
+                          </div>
                         )}
                         <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
                           <Download size={14} />
@@ -2107,6 +2129,25 @@ export default function ShiftManager() {
                 placeholder="名前を入力"
                 style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px', width: '100%' }}
               />
+              {stores.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '6px', fontWeight: 600 }}>所属店舗</div>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {stores.map(st => {
+                      const on = newPersonStore === st;
+                      return (
+                        <button key={st} onClick={() => setNewPersonStore(on ? '' : st)}
+                          style={{ fontSize: '12px', fontWeight: on ? 800 : 500, padding: '7px 14px', borderRadius: '999px',
+                            border: '1px solid ' + (on ? storeColor(stores, st) : '#E2DCCC'),
+                            background: on ? storeColor(stores, st) : '#FFFFFF',
+                            color: on ? '#FFFFFF' : '#8A8378', cursor: 'pointer', fontFamily: 'inherit' }}>
+                          {st}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <button onClick={addPerson} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 18px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontSize: '13px', fontWeight: 600, cursor: 'pointer', width: '100%' }}>
                 <Plus size={14} /> 追加
               </button>

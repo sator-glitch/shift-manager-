@@ -58,6 +58,25 @@ function assistantTypeColor(assistantTypes, typeName) {
   return ASSISTANT_TYPE_COLOR_PALETTE[idx % ASSISTANT_TYPE_COLOR_PALETTE.length];
 }
 
+// ─── 所属店舗（1つのワークスペースに複数店舗が混ざるとき用）
+const STORE_COLOR_PALETTE = [
+  '#4361EE', '#E63946', '#2A9D8F', '#F4A300',
+  '#9D4EDD', '#06A77D', '#EF476F', '#118AB2',
+];
+function storeColor(stores, name) {
+  const idx = (stores || []).indexOf(name);
+  if (idx < 0) return '#9C9486';
+  return STORE_COLOR_PALETTE[idx % STORE_COLOR_PALETTE.length];
+}
+// 名前の前に出す店舗の印。店舗が未設定なら何も出さない
+function StoreDot({ stores, store, size = 8 }) {
+  if (!store) return null;
+  return (
+    <span title={store} style={{ width: size + 'px', height: size + 'px', borderRadius: '50%',
+      background: storeColor(stores, store), flexShrink: 0, display: 'inline-block' }} />
+  );
+}
+
 function getMonthDates(year, month) {
   const dates = [];
   const last = new Date(year, month + 1, 0).getDate();
@@ -195,6 +214,8 @@ export default function ShiftManager() {
   const [assistants, setAssistants] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [assistantTypes, setAssistantTypes] = useState(DEFAULT_ASSISTANT_TYPES);
+  const [stores, setStores] = useState([]);          // 所属店舗の一覧（空なら機能オフ）
+  const [newStore, setNewStore] = useState('');
   const [newAssistantType, setNewAssistantType] = useState('');
   const [practiceDays, setPracticeDays] = useState({}); // dateStr -> { sessions: [ {id, category, startTime, endTime, trainerAvail, assistantAvail, assigned} ] }
   const [newName, setNewName] = useState('');
@@ -300,6 +321,7 @@ export default function ShiftManager() {
           setAssistants(data.assistants || []);
           setCategories(data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES);
           setAssistantTypes(data.assistantTypes && data.assistantTypes.length ? data.assistantTypes : DEFAULT_ASSISTANT_TYPES);
+          setStores(Array.isArray(data.stores) ? data.stores : []);
           setPracticeDays(data.practiceDays || {});
         } else {
           setTrainers([]);
@@ -366,8 +388,8 @@ export default function ShiftManager() {
 
   useEffect(() => {
     if (!loaded || !activeWorkspaceId) return;
-    persist(activeWorkspaceId, { trainers, assistants, categories, assistantTypes, practiceDays });
-  }, [trainers, assistants, categories, assistantTypes, practiceDays, loaded, activeWorkspaceId, persist]);
+    persist(activeWorkspaceId, { trainers, assistants, categories, assistantTypes, stores, practiceDays });
+  }, [trainers, assistants, categories, assistantTypes, stores, practiceDays, loaded, activeWorkspaceId, persist]);
 
   // 自動スナップショット：全ワークスペースの状態を定期的にブラウザ内へ複数世代保存する
   const takeSnapshot = useCallback(async () => {
@@ -813,6 +835,25 @@ export default function ShiftManager() {
 
   function removeCategory(cat) {
     setCategories(prev => prev.filter(c => c !== cat));
+  }
+
+  function addStore() {
+    const v = newStore.trim();
+    if (!v || stores.includes(v)) { setNewStore(''); return; }
+    setStores([...stores, v]); setNewStore('');
+  }
+  function removeStore(name) {
+    setStores(stores.filter(s2 => s2 !== name));
+    setTrainers(ts => ts.map(t => t.store === name ? { ...t, store: undefined } : t));
+    setAssistants(as => as.map(a => a.store === name ? { ...a, store: undefined } : a));
+  }
+  function setPersonStore(id, type, name) {
+    const upd = arr => arr.map(x => x.id === id ? { ...x, store: name || undefined } : x);
+    if (type === 'trainer') setTrainers(upd); else setAssistants(upd);
+  }
+  function storeOf(id) {
+    const t = trainers.find(x => x.id === id) || assistants.find(x => x.id === id);
+    return t ? t.store : undefined;
   }
 
   function addAssistantType() {
@@ -1858,6 +1899,38 @@ export default function ShiftManager() {
           </div>
 
           <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 4px', color: '#1F1C18' }}>所属店舗</h3>
+            <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.5 }}>
+              1つの勉強会に複数の店舗が混ざるときに登録します。登録すると、下の一覧と日別設定で名前の前に店舗の色が付きます。使わない場合は空のままで構いません。
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+              {stores.map(st => (
+                <span key={st} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '7px 12px', borderRadius: '8px', background: '#FAF8F4', border: '1px solid #EEE9DE' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: storeColor(stores, st), flexShrink: 0 }} />
+                  {st}
+                  {isUnlocked && (
+                    <button onClick={() => removeStore(st)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C2A98E', display: 'flex' }}>
+                      <X size={12} />
+                    </button>
+                  )}
+                </span>
+              ))}
+              {stores.length === 0 && <span style={{ fontSize: '13px', color: '#B0A99A' }}>登録なし（店舗で分けません）</span>}
+            </div>
+            {isUnlocked && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input value={newStore} onChange={e => setNewStore(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addStore()}
+                  placeholder="例：GINZA、GINZA U"
+                  style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #E2DCCC', fontSize: '13px' }} />
+                <button onClick={addStore} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', borderRadius: '8px', border: 'none', background: '#2B2823', color: '#FAF8F4', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                  <Plus size={14} /> 追加
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ background: '#FFFFFF', borderRadius: '14px', padding: '20px', border: '1px solid #EEE9DE' }}>
             <h3 style={{ fontSize: '14px', fontWeight: 700, margin: '0 0 4px', color: '#1F1C18' }}>アシスタント実習タイプ</h3>
             <div style={{ fontSize: '11px', color: '#9C9486', marginBottom: '12px', lineHeight: 1.5 }}>
               モデル実習・ウィッグ実習など、負担の種類を登録します。シフト画面の日別設定で各アシスタントにタイプを設定すると、自動割り当て時にトレーナーごとにバランスよく振り分けます。
@@ -1918,7 +1991,9 @@ export default function ShiftManager() {
                         onKeyDown={e => { if (e.key === 'Enter') saveRenamePerson('trainer'); if (e.key === 'Escape') cancelRenamePerson(); }}
                         style={{ flex: 1, minWidth: 0, padding: '5px 9px', borderRadius: '6px', border: '1px solid #2B2823', fontSize: '13px', fontFamily: 'inherit', background: '#FFFFFF', color: '#2B2823' }} />
                     ) : (
-                      <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                      <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <StoreDot stores={stores} store={t.store} />{t.name}
+                      </span>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
@@ -1929,6 +2004,13 @@ export default function ShiftManager() {
                       </>
                     ) : (
                       <>
+                        {isUnlocked && stores.length > 0 && (
+                          <select value={t.store || ''} onChange={e => setPersonStore(t.id, 'trainer', e.target.value)}
+                            style={{ fontSize: '11px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', fontFamily: 'inherit', maxWidth: '110px' }}>
+                            <option value="">店舗なし</option>
+                            {stores.map(st => <option key={st} value={st}>{st}</option>)}
+                          </select>
+                        )}
                         <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, t.id, 'trainer'), `${t.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
                           <Download size={14} />
                         </button>
@@ -1972,7 +2054,9 @@ export default function ShiftManager() {
                       onKeyDown={e => { if (e.key === 'Enter') saveRenamePerson('assistant'); if (e.key === 'Escape') cancelRenamePerson(); }}
                       style={{ flex: 1, minWidth: 0, padding: '5px 9px', borderRadius: '6px', border: '1px solid #2B2823', fontSize: '13px', fontFamily: 'inherit', background: '#FFFFFF', color: '#2B2823' }} />
                   ) : (
-                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{a.name}</span>
+                    <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <StoreDot stores={stores} store={a.store} />{a.name}
+                    </span>
                   )}
                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
                     {editingPersonId === a.id ? (
@@ -1982,6 +2066,13 @@ export default function ShiftManager() {
                       </>
                     ) : (
                       <>
+                        {isUnlocked && stores.length > 0 && (
+                          <select value={a.store || ''} onChange={e => setPersonStore(a.id, 'assistant', e.target.value)}
+                            style={{ fontSize: '11px', padding: '4px 6px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#8A8378', fontFamily: 'inherit', maxWidth: '110px' }}>
+                            <option value="">店舗なし</option>
+                            {stores.map(st => <option key={st} value={st}>{st}</option>)}
+                          </select>
+                        )}
                         <button onClick={() => downloadIcs(buildIcs(practiceDays, year, month, trainers, assistants, a.id, 'assistant'), `${a.name}_シフト_${year}年${month + 1}月.ics`)} title="この人の予定をカレンダーファイルで書き出す" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8A8378', padding: '4px' }}>
                           <Download size={14} />
                         </button>
@@ -2229,7 +2320,7 @@ export default function ShiftManager() {
                                     disabled={blocked}
                                     title={blocked ? (closedToday ? '定休日のため割り当てできません' : `${t.name}さんの休みのため割り当てできません`) : undefined}
                                     style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: blocked ? '1px solid #EEE9DE' : (on ? '1px solid #2B2823' : '1px solid #EEE9DE'), background: blocked ? '#F3F1EC' : (on ? '#2B2823' : '#FAF8F4'), color: blocked ? '#C9C2B2' : (on ? '#FAF8F4' : '#9C9486'), cursor: blocked ? 'not-allowed' : 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                    {t.name}
+                                    <StoreDot stores={stores} store={t.store} />{t.name}
                                     <span style={{ fontSize: '10px', opacity: 0.7 }}>
                                       {`(${count})`}{blocked ? (closedToday ? ' 定休日' : ' 休み') : ''}
                                     </span>
@@ -2238,7 +2329,7 @@ export default function ShiftManager() {
                               }) : (
                                 (session.assigned?.trainers || []).length > 0
                                   ? sortIdsByRank(session.assigned.trainers, 'trainer').map(id => (
-                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700 }}>{nameById(id, 'trainer')}</span>
+                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}><StoreDot stores={stores} store={storeOf(id)} />{nameById(id, 'trainer')}</span>
                                     ))
                                   : <span style={{ fontSize: '12px', color: '#C2BBA9' }}>未割り当て</span>
                               )}
@@ -2258,7 +2349,7 @@ export default function ShiftManager() {
                                     disabled={blocked}
                                     title={blocked ? (closedToday ? '定休日のため割り当てできません' : `${a.name}さんの休みのため割り当てできません`) : undefined}
                                     style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: blocked ? '1px solid #EEE9DE' : (on ? '1px solid #2B2823' : '1px solid #EEE9DE'), background: blocked ? '#F3F1EC' : (on ? '#2B2823' : '#FAF8F4'), color: blocked ? '#C9C2B2' : (on ? '#FAF8F4' : '#9C9486'), cursor: blocked ? 'not-allowed' : 'pointer', fontWeight: on ? 700 : 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                    {a.name}
+                                    <StoreDot stores={stores} store={a.store} />{a.name}
                                     {aType && !blocked && (
                                       <span style={{ fontSize: '9px', padding: '2px 5px', borderRadius: '999px', background: assistantTypeColor(assistantTypes, aType), color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>
                                     )}
@@ -2270,7 +2361,7 @@ export default function ShiftManager() {
                               }) : (
                                 (session.assigned?.assistants || []).length > 0
                                   ? sortIdsByRank(session.assigned.assistants, 'assistant').map(id => (
-                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700 }}>{nameById(id, 'assistant')}</span>
+                                      <span key={id} style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', background: '#2B2823', color: '#FAF8F4', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}><StoreDot stores={stores} store={storeOf(id)} />{nameById(id, 'assistant')}</span>
                                     ))
                                   : <span style={{ fontSize: '12px', color: '#C2BBA9' }}>未割り当て</span>
                               )}
@@ -2327,8 +2418,8 @@ export default function ShiftManager() {
                               return (
                                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                   <button onClick={() => toggleDayParticipant(ds, a.id)}
-                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isParticipant ? '1px solid #2B2823' : '1px solid #E2DCCC', background: isParticipant ? '#2B2823' : '#FFFFFF', color: isParticipant ? '#FAF8F4' : '#8A8378', cursor: 'pointer', fontWeight: isParticipant ? 700 : 500 }}>
-                                    {a.name}
+                                    style={{ fontSize: '12px', padding: '5px 12px', borderRadius: '8px', border: isParticipant ? '1px solid #2B2823' : '1px solid #E2DCCC', background: isParticipant ? '#2B2823' : '#FFFFFF', color: isParticipant ? '#FAF8F4' : '#8A8378', cursor: 'pointer', fontWeight: isParticipant ? 700 : 500, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                    <StoreDot stores={stores} store={a.store} />{a.name}
                                   </button>
                                   {isParticipant && assistantTypes.length > 0 && (
                                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -2360,7 +2451,7 @@ export default function ShiftManager() {
                               const tColor = aType ? assistantTypeColor(assistantTypes, aType) : null;
                               return (
                                 <span key={aid} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '8px', background: '#2B2823', color: '#FAF8F4', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                  {nameById(aid, 'assistant')}
+                                  <StoreDot stores={stores} store={storeOf(aid)} />{nameById(aid, 'assistant')}
                                   {aType && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: tColor, color: '#FFFFFF', fontWeight: 700 }}>{aType}</span>}
                                 </span>
                               );
@@ -2391,7 +2482,7 @@ export default function ShiftManager() {
                                  return (
                                    <button key={tid} onClick={() => setManualPairingTrainerId(isSel ? null : tid)}
                                      style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: isSel ? '2px solid #4361EE' : '1px solid #E2DCCC', background: isSel ? '#EEF2FF' : '#FFFFFF', color: isSel ? '#4361EE' : '#2B2823', cursor: 'pointer', fontWeight: isSel ? 700 : 500 }}>
-                                     {nameById(tid, 'trainer')}
+                                     <StoreDot stores={stores} store={storeOf(tid)} />{nameById(tid, 'trainer')}
                                      {ac > 0 && <span style={{ fontSize: '10px', marginLeft: '4px', color: '#4A6B5A' }}>{ac}人</span>}
                                    </button>
                                  );
@@ -2428,7 +2519,7 @@ export default function ShiftManager() {
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             {Object.entries(day?.dayPairings).map(([tid, aids]) => (
                               <div key={tid}>
-                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px' }}>{nameById(tid, 'trainer')}</div>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#2B2823', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}><StoreDot stores={stores} store={storeOf(tid)} />{nameById(tid, 'trainer')}</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
                                   {aids.length > 0 ? aids.map(aid => {
                                     const _r = (day?.dayTypeMap || {})[aid];

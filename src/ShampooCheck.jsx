@@ -134,13 +134,13 @@ const PASS_LINE  = 165;   // 既定値。実際の合格点は MODES で種類�
 const MODES = {
   curriculum: {
     key:'curriculum', label:'新卒カリキュラムチェック', period:'4〜6月', target:'新卒',
-    pass: 165,            // ★合格点（要確認）
+    pass: 150,            // 150点以上で合格
     reflect: true,        // 合格したらカリキュラムの合格マトリクスに合格日を入れる
     note:'合格するとカリキュラムの「ショートシャンプー」「ロングシャンプー」に合格日が入ります',
   },
   level: {
     key:'level', label:'技術レベルチェック', period:'11〜12月', target:'1〜3年目',
-    pass: 165,            // ★合格点（要確認）
+    pass: 165,            // 165点以上で合格
     reflect: false,       // カリキュラムには入れない。点数だけ貯める
     note:'カリキュラムには反映しません。点数だけ記録します',
   },

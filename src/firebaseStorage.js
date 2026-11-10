@@ -42,6 +42,15 @@ export const firebaseStorage = {
     return { key, deleted: true };
   },
 
+  // キー名だけを1回のリクエストで取る（バックアップ用。全件の中身は落とさない）
+  async listShallow(prefix) {
+    const r = await fetch(firebaseConfig.databaseURL + '/data.json?shallow=true');
+    if (!r.ok) throw new Error('listShallow failed');
+    const all = await r.json();
+    const keys = Object.keys(all || {});
+    return { keys: prefix ? keys.filter(k => k.startsWith(encodeKey(prefix))) : keys };
+  },
+
   async list(prefix) {
     const snapshot = await get(ref(db, 'data'));
     if (!snapshot.exists()) return { keys: [] };

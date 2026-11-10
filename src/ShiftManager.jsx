@@ -200,6 +200,7 @@ export default function ShiftManager() {
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [restoreMessage, setRestoreMessage] = useState('');
   const [snapshotList, setSnapshotList] = useState([]);
+  const [backupBusy, setBackupBusy] = useState('');
   const [draggedWorkspaceId, setDraggedWorkspaceId] = useState(null);
   const [draggedTrainerId, setDraggedTrainerId] = useState(null);
   const [draggedAssistantId, setDraggedAssistantId] = useState(null);
@@ -508,28 +509,96 @@ export default function ShiftManager() {
     setRestoreMessage(`${new Date(snapshot.takenAt).toLocaleString('ja-JP')}の状態に復元しました。`);
   }
 
-  async function exportAllData() {
-    const allData = { workspaces, data: {} };
-    for (const w of workspaces) {
-      try {
-        const res = await window.storage.get(workspaceDataKey(w.id));
-        allData.data[w.id] = res && res.value ? JSON.parse(res.value) : null;
-      } catch (e) {
-        allData.data[w.id] = null;
-      }
+  // ── 全体バックアップ ──────────────────────────────────────────
+  // シフトだけでなく、カリキュラム・シャンプーチェック・紐付け・本人確認の回答まで
+  // まとめて1つのファイルにする。過去のバックアップ自体は二重に抱えないよう除外する。
+  const BACKUP_SKIP = /^full_snapshot|^rename_backup|_bk\d|_backup_|^shift_manager_snapshots_v1$/;
+
+  async function collectAllData(onProgress) {
+    const res = window.storage.listShallow
+      ? await window.storage.listShallow()   // キー名だけ取るので速い
+      : await window.storage.list();
+    const target = (res.keys || []).filter(k => !BACKUP_SKIP.test(k));
+    const data = {};
+    for (let i = 0; i < target.length; i += 20) {
+      const part = target.slice(i, i + 20);
+      const vals = await Promise.all(part.map(async k => {
+        try { const r = await window.storage.get(k); return r.value; } catch (e) { return undefined; }
+      }));
+      part.forEach((k, j) => { if (vals[j] !== undefined && vals[j] !== null) data[k] = vals[j]; });
+      if (onProgress) onProgress(Object.keys(data).length, target.length);
     }
-    downloadJson(allData, `シフト管理バックアップ_${fmtDate(new Date())}.json`);
+    return data;
+  }
+
+  function backupSummary(data) {
+    const n = k => { try { return JSON.parse(data[k]); } catch (e) { return null; } };
+    const cur = n('curriculum_v2');
+    const sha = n('shampoo_check_v1');
+    const lnk = n('shift_curriculum_link_v1');
+    const ws  = n('shift_manager_workspaces_v1');
+    const recN = cur ? Object.values(cur.records || {}).reduce((t, m) => t + Object.keys(m || {}).length, 0) : 0;
+    return [
+      cur ? `カリキュラム：スタッフ${(cur.staff || []).length}名・合格記録${recN}件` : 'カリキュラム：なし',
+      ws  ? `シフト：勉強会ページ${ws.length}件` : 'シフト：なし',
+      sha ? `シャンプーチェック：人員${(sha.people?.members || []).length}名・記録${Object.keys(sha.results || {}).length}件` : 'シャンプーチェック：なし',
+      lnk ? `紐付け：${Object.keys(lnk).length}件` : '紐付け：なし',
+      `保存するキー：${Object.keys(data).length}件`,
+    ].join('\n');
+  }
+
+  async function exportAllData() {
+    setBackupBusy('バックアップを作成中…');
+    try {
+      const data = await collectAllData((done, total) => setBackupBusy(`バックアップを作成中… ${done}/${total}`));
+      const payload = { version: 2, takenAt: new Date().toISOString(), data };
+      const stamp = fmtDate(new Date()).replace(/[^0-9]/g, '');
+      // Firebase の中にも日付つきで1つ残す（端末を変えても戻せるように）
+      try { await window.storage.set('full_snapshot_' + stamp, JSON.stringify(payload)); } catch (e) { console.error(e); }
+      downloadJson(payload, `NORA全体バックアップ_${fmtDate(new Date())}.json`);
+      alert('バックアップを保存しました。\n\n' + backupSummary(data) +
+        '\n\nダウンロードしたファイルは、パソコンの中など別の場所にも置いておいてください。');
+    } catch (e) {
+      console.error(e);
+      alert('バックアップに失敗しました。通信状況を確認してもう一度お試しください。');
+    }
+    setBackupBusy('');
   }
 
   async function importAllData(file) {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
+
+      // 新しい形式（全体バックアップ）
+      if (parsed.version === 2 && parsed.data) {
+        const keys = Object.keys(parsed.data);
+        const when = parsed.takenAt ? new Date(parsed.takenAt).toLocaleString('ja-JP') : '不明';
+        if (!confirm(`${when} のバックアップから復元します。\n\n${backupSummary(parsed.data)}\n\n` +
+          '今のデータは上書きされます。よろしいですか。')) return;
+        setBackupBusy('復元中…');
+        // 上書きする前に、今の状態を必ず1つ残しておく
+        try {
+          const before = await collectAllData();
+          await window.storage.set('full_snapshot_復元前_' + Date.now(), JSON.stringify({ version:2, takenAt:new Date().toISOString(), data: before }));
+        } catch (e) { console.error(e); }
+        for (let i = 0; i < keys.length; i += 10) {
+          const part = keys.slice(i, i + 10);
+          await Promise.all(part.map(k => window.storage.set(k, parsed.data[k]).catch(e => console.error(k, e))));
+          setBackupBusy(`復元中… ${Math.min(i + 10, keys.length)}/${keys.length}`);
+        }
+        setBackupBusy('');
+        alert('復元が完了しました。画面を読み込み直します。');
+        window.location.reload();
+        return;
+      }
+
+      // 以前の形式（シフトだけ）
       if (!parsed.workspaces || !parsed.data) {
         alert('このファイルの形式が正しくありません。');
         return;
       }
-      // 上書きする前に、復元直前の状態を必ず1つ残しておく
+      if (!confirm('シフトだけが入った古い形式のバックアップです。シフトのみ復元します。よろしいですか。')) return;
       await takeSnapshot();
       for (const w of parsed.workspaces) {
         const wsData = parsed.data[w.id];
@@ -544,6 +613,7 @@ export default function ShiftManager() {
     } catch (e) {
       console.error(e);
       alert('復元に失敗しました。ファイルを確認してください。');
+      setBackupBusy('');
     }
   }
 
@@ -1505,8 +1575,10 @@ export default function ShiftManager() {
 
           {hasMasterAccess && (
           <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderRadius: '10px', background: '#FFF8EC', border: '1px solid #F0E0BE', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', color: '#8A7A52' }}>定期的にバックアップの保存をおすすめします</span>
-            <button onClick={exportAllData} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer', color: '#2B2823' }}>
+            <span style={{ fontSize: '11px', color: '#8A7A52' }}>
+              {backupBusy || 'カリキュラム・シフト・シャンプーチェックをまとめて保存します'}
+            </span>
+            <button onClick={exportAllData} disabled={!!backupBusy} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: backupBusy ? 'default' : 'pointer', color: '#2B2823', opacity: backupBusy ? 0.5 : 1 }}>
               <Save size={13} /> バックアップを保存
             </button>
             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FFFFFF', cursor: 'pointer', color: '#2B2823' }}>

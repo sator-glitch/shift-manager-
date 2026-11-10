@@ -127,7 +127,27 @@ const SECTIONS = [
 const ALL_ITEMS  = SECTIONS.flatMap(s => s.items.map(i => ({ ...i, section: s.name, sectionKey: s.key })));
 const ITEM_BY_ID = Object.fromEntries(ALL_ITEMS.map(i => [i.id, i]));
 const MAX_TOTAL  = ALL_ITEMS.length * 3;   // 180
-const PASS_LINE  = 165;
+const PASS_LINE  = 165;   // 既定値。実際の合格点は MODES で種類ごとに持つ
+
+// ─── チェックの種類 ─────────────────────────────────────────────
+// 項目表はどちらも同じ60項目。違うのは合格点と、カリキュラムに反映するかどうか。
+const MODES = {
+  curriculum: {
+    key:'curriculum', label:'新卒カリキュラムチェック', period:'4〜6月', target:'新卒',
+    pass: 165,            // ★合格点（要確認）
+    reflect: true,        // 合格したらカリキュラムの合格マトリクスに合格日を入れる
+    note:'合格するとカリキュラムの「ショートシャンプー」「ロングシャンプー」に合格日が入ります',
+  },
+  level: {
+    key:'level', label:'技術レベルチェック', period:'11〜12月', target:'1〜3年目',
+    pass: 165,            // ★合格点（要確認）
+    reflect: false,       // カリキュラムには入れない。点数だけ貯める
+    note:'カリキュラムには反映しません。点数だけ記録します',
+  },
+};
+// カリキュラム側の項目ID（アシスタント基礎技術）
+const CURRICULUM_ITEM_BY_KIND = { short:'46mogg01', long:'a133hldl' };
+const CURRICULUM_ITEM_NAME    = { short:'ショートシャンプー', long:'ロングシャンプー' };
 const SCORE_LABEL = { 0:'全くダメ', 1:'要練習！', 2:'まあまあok！', 3:'良い感じ！' };
 const SECTION_MAX = Object.fromEntries(SECTIONS.map(s => [s.key, s.items.length * 3]));
 
@@ -157,7 +177,7 @@ function sortMembers(members, stores) {
 //  ・⭐︎の所は3をもらえないと不合格
 //  ・0点が1つでもあれば不合格
 //  ・ただし ※1が0点で※2に点が入った場合、※3が0点で※4に点が入った場合、その0点は不合格としない
-function judge(scores) {
+function judge(scores, passLine = PASS_LINE) {
   const reasons = [];
   let total = 0, unscored = 0;
   ALL_ITEMS.forEach(it => {
@@ -175,7 +195,7 @@ function judge(scores) {
     const v = scores[it.id];
     if (v !== undefined && v !== null && v !== 3) reasons.push({ type:'star', text:`⭐︎項目が3点でない：${it.t}（${v}点）` });
   });
-  if (unscored === 0 && total < PASS_LINE) reasons.push({ type:'total', text:`合計が${PASS_LINE}点未満（${total}点）` });
+  if (unscored === 0 && total < passLine) reasons.push({ type:'total', text:`合計が${passLine}点未満（${total}点）` });
   return { total, unscored, pass: unscored === 0 && reasons.length === 0, reasons };
 }
 function sectionTotal(scores, key) {
@@ -269,6 +289,7 @@ function ShampooCheckInner() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
+  const [mode, setMode]       = useState(null);              // null=入口 / 'curriculum' / 'level'
   const [tab, setTab]         = useState('check');           // check | people
   const [view, setView]       = useState({ name:'list' });   // list | form | detail
   const [err, setErr]         = useState('');
@@ -360,9 +381,37 @@ function ShampooCheckInner() {
   const results = useMemo(() => Object.values(data.results || {})
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')), [data]);
 
+  // 新卒カリキュラムチェックで合格したら、カリキュラムの合格マトリクスに合格日を入れる
+  async function reflectToCurriculum(rec) {
+    const itemId = CURRICULUM_ITEM_BY_KIND[rec.kind];
+    if (!itemId) return { ok:false, reason:'ショートかロングかが分かりません' };
+    try {
+      // 書き込む直前に読み直して、他の人の編集を踏まないようにする
+      const r = await window.storage.get(CURRICULUM_KEY);
+      const cur = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+      if (!(cur.staff || []).some(x => x.id === rec.staffId))
+        return { ok:false, reason:'カリキュラムに同じ人が見つかりません（シャンプーチェックで後から追加した人は反映できません）' };
+      cur.records = cur.records || {};
+      cur.records[rec.staffId] = cur.records[rec.staffId] || {};
+      const before = cur.records[rec.staffId][itemId];
+      if (before && before !== rec.date)
+        return { ok:false, reason:`カリキュラムにはすでに ${before} で合格が入っています。上書きしていません` };
+      cur.records[rec.staffId][itemId] = rec.date;
+      await window.storage.set(CURRICULUM_KEY, JSON.stringify(cur));
+      return { ok:true, itemId, itemName: CURRICULUM_ITEM_NAME[rec.kind] };
+    } catch (e) { return { ok:false, reason:'カリキュラムへの書き込みに失敗しました' }; }
+  }
+
   async function saveResult(rec) {
-    await persist(remote => ({ ...remote, results: { ...remote.results, [rec.id]: rec } }));
-    setView({ name:'detail', id: rec.id });
+    let reflected = null;
+    if (MODES[rec.mode]?.reflect && rec.pass) {
+      const r = await reflectToCurriculum(rec);
+      reflected = r.ok ? { at: rec.date, item: r.itemName } : { failed: r.reason };
+      if (!r.ok) setErr(`カリキュラムに反映できませんでした：${r.reason}`);
+    }
+    const saved = { ...rec, reflected };
+    await persist(remote => ({ ...remote, results: { ...remote.results, [saved.id]: saved } }));
+    setView({ name:'detail', id: saved.id });
   }
   async function deleteResult(id) {
     await persist(remote => { const rs = { ...remote.results }; delete rs[id]; return { ...remote, results: rs }; });
@@ -390,16 +439,52 @@ function ShampooCheckInner() {
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
+  if (!mode) return (
+    <Shell>
+      <a href="/" style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, textDecoration:'none', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> シフト管理に戻る
+      </a>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 4px', color:C.text, letterSpacing:'0.02em' }}>シャンプーチェック</h1>
+      <div style={{ fontSize:'13px', color:C.mute, marginBottom:'22px' }}>どちらのチェックですか</div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:'12px', marginBottom:'16px' }}>
+        {Object.values(MODES).map(m => {
+          const n = results.filter(r => r.mode === m.key).length;
+          return (
+            <button key={m.key} onClick={() => { setMode(m.key); setTab('check'); setView({ name:'list' }); }}
+              style={{ textAlign:'left', padding:'18px', borderRadius:'14px', border:`1px solid ${C.line}`, background:C.card, cursor:'pointer' }}>
+              <div style={{ fontSize:'11px', color:C.mute, fontWeight:600, marginBottom:'5px' }}>{m.period}・{m.target}</div>
+              <div style={{ fontSize:'16px', fontWeight:700, color:C.text, marginBottom:'8px' }}>{m.label}</div>
+              <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.7 }}>
+                {MAX_TOTAL}点満点／{m.pass}点以上で合格<br />{m.note}
+              </div>
+              <div style={{ fontSize:'11px', color:C.mute, marginTop:'10px', fontWeight:600 }}>記録 {n}件</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <button onClick={() => { setMode('curriculum'); setTab('people'); }}
+        style={{ display:'flex', alignItems:'center', gap:'6px', padding:'11px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
+        <Users size={14} /> 人員登録
+      </button>
+      <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px' }}>人員登録は2つのチェックで共通です。</div>
+    </Shell>
+  );
+
+  const M = MODES[mode];
+
   return (
     <Shell>
       <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'12px', flexWrap:'wrap', marginBottom:'14px' }}>
         <div>
-          <a href="/" style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, textDecoration:'none', marginBottom:'4px' }}>
-            <ChevronLeft size={12} /> シフト管理に戻る
-          </a>
-          <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text, letterSpacing:'0.02em' }}>シャンプーチェック</h1>
+          <button onClick={() => { setMode(null); setView({ name:'list' }); }}
+            style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+            <ChevronLeft size={12} /> チェックの選択に戻る
+          </button>
+          <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text, letterSpacing:'0.02em' }}>{M.label}</h1>
           <div style={{ fontSize:'12px', color:C.mute, marginTop:'2px' }}>
-            {saving ? '保存中…' : `${MAX_TOTAL}点満点／${PASS_LINE}点以上で合格`}
+            {saving ? '保存中…' : `${M.period}・${M.target}／${MAX_TOTAL}点満点・${M.pass}点以上で合格`}
           </div>
         </div>
         {tab === 'check' && view.name === 'list' && (
@@ -437,14 +522,14 @@ function ShampooCheckInner() {
             onOk={isMaster => { unlock('people'); if (isMaster) unlock('master'); }}
             onCancel={() => setTab('check')} />)}
 
-      {tab === 'check' && view.name === 'list'   && <ListView results={results} onOpen={id => setView({ name:'detail', id })} />}
+      {tab === 'check' && view.name === 'list'   && <ListView results={results.filter(r => r.mode === mode)} onOpen={id => setView({ name:'detail', id })} />}
       {tab === 'check' && view.name === 'form'   && (canScore
-        ? <FormView people={people} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />
+        ? <FormView people={people} mode={M} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />
         : <PasswordGate title="採点" note="新しく採点する／採点を直すときに必要です"
             expected={scorePw} master={masterPw}
             onOk={isMaster => { unlock('score'); if (isMaster) unlock('master'); }}
             onCancel={() => setView({ name:'list' })} />)}
-      {tab === 'check' && view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results} masterPw={masterPw}
+      {tab === 'check' && view.name === 'detail' && <DetailView rec={data.results[view.id]} results={results.filter(r => r.mode === mode)} mode={M} masterPw={masterPw}
                                    onBack={() => setView({ name:'list' })}
                                    onEdit={rec => setView({ name:'form', base: rec })}
                                    onDelete={deleteResult} />}
@@ -540,7 +625,7 @@ function ListView({ results, onOpen }) {
 const selStyle = { padding:'9px 10px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text };
 
 // ─── 採点フォーム ───────────────────────────────────────────────
-function FormView({ people, base, onCancel, onSave, saving }) {
+function FormView({ people, mode, base, onCancel, onSave, saving }) {
   const [staffId, setStaffId] = useState(base?.staffId || '');
   const [scorer, setScorer]   = useState(base?.scorer || '');
   const [scorerOther, setScorerOther] = useState('');
@@ -551,7 +636,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
 
   const members = people.members || [];
   const person  = members.find(s => s.id === staffId);
-  const res     = judge(scores);
+  const res     = judge(scores, mode.pass);
   // 人員登録で並べた順にそのまま出す
 
   function pick(item, v) {
@@ -572,7 +657,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
     if (!kind) { alert('ショートかロングかを選んでください'); return; }
     if (res.unscored > 0) { alert(`未入力が${res.unscored}項目あります`); return; }
     onSave({
-      id: base?.id || uid(), itemSet: ITEM_SET,
+      id: base?.id || uid(), itemSet: ITEM_SET, mode: mode.key,
       staffId, staffName: person?.name || '', store: person?.store || '', kind,
       scorer: scorerName, date, memo: memo.trim(), scores,
       total: res.total, pass: res.pass,
@@ -583,6 +668,12 @@ function FormView({ people, base, onCancel, onSave, saving }) {
 
   return (
     <>
+      <div style={{ marginBottom:'12px', padding:'10px 14px', borderRadius:'10px',
+        background: mode.reflect ? C.okBg : C.soft, border:`1px solid ${mode.reflect ? '#C9DDD0' : C.line}`, fontSize:'12px', color:C.text, lineHeight:1.7 }}>
+        <b>{mode.label}</b>（{mode.period}・{mode.target}）／ {mode.pass}点以上で合格<br />
+        <span style={{ color:C.mute }}>{mode.note}</span>
+      </div>
+
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'14px' }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:'12px' }}>
           <label style={lblStyle}>
@@ -704,7 +795,7 @@ function FormView({ people, base, onCancel, onSave, saving }) {
 const lblStyle = { display:'block', fontSize:'11px', fontWeight:600, color:C.mute };
 
 // ─── 詳細 ───────────────────────────────────────────────────────
-function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
+function DetailView({ rec, results, mode, masterPw, onBack, onEdit, onDelete }) {
   const [pwInput, setPwInput] = useState('');
   const [asking, setAsking]   = useState(false);
   if (!rec) return <div style={{ color:C.mute }}>この採点は見つかりませんでした。<button onClick={onBack} style={linkBtn}>一覧へ</button></div>;
@@ -751,6 +842,17 @@ function DetailView({ rec, results, masterPw, onBack, onEdit, onDelete }) {
         </div>
         {rec.memo && <div style={{ marginTop:'12px', padding:'10px 12px', background:C.soft, borderRadius:'9px', fontSize:'12px', color:C.text, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{rec.memo}</div>}
       </div>
+
+      {rec.reflected && (
+        <div style={{ marginBottom:'14px', padding:'11px 14px', borderRadius:'11px', fontSize:'12px', lineHeight:1.7,
+          background: rec.reflected.failed ? C.ngBg : C.okBg,
+          border:`1px solid ${rec.reflected.failed ? '#F2C9CE' : '#C9DDD0'}`,
+          color: rec.reflected.failed ? C.ng : '#2B4A3A' }}>
+          {rec.reflected.failed
+            ? <>カリキュラムに反映できませんでした：{rec.reflected.failed}</>
+            : <>カリキュラムの「{rec.reflected.item}」に <b>{fmtDate(rec.reflected.at)}</b> で合格を入れました</>}
+        </div>
+      )}
 
       {!rec.pass && (rec.reasons || []).length > 0 && (
         <div style={{ background:C.ngBg, border:'1px solid #F2C9CE', borderRadius:'12px', padding:'12px 14px', marginBottom:'14px' }}>

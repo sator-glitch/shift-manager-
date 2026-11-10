@@ -417,6 +417,43 @@ function ShampooCheckInner() {
     await persist(remote => { const rs = { ...remote.results }; delete rs[id]; return { ...remote, results: rs }; });
     setView({ name:'list' });
   }
+  // 採点画面からその場で人を足す。カリキュラムに同名がいればそのIDを使い、
+  // 新卒カリキュラムチェックの合格がちゃんと反映されるようにする
+  async function addPerson(name, store) {
+    let id = uid(), fromCurriculum = false, st = store;
+    try {
+      const r = await window.storage.get(CURRICULUM_KEY);
+      const cur = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+      const hit = (cur.staff || []).find(x => !x.retired && x.name === name);
+      if (hit) { id = hit.id; fromCurriculum = true; if (!st) st = hit.store || ''; }
+    } catch (e) {}
+    const m = { id, name, store: st || '' };
+    await persist(remote => {
+      const pp = remote.people || { stores:[...STORES], members:[] };
+      if ((pp.members || []).some(x => x.id === m.id || x.name === m.name)) return remote;
+      return { ...remote, people: { ...pp, members: [...(pp.members || []), m] } };
+    });
+    return { ...m, fromCurriculum };
+  }
+
+  // 人員登録: カリキュラムにいてここに未登録の人をまとめて取り込む
+  async function importFromCurriculum() {
+    try {
+      const r = await window.storage.get(CURRICULUM_KEY);
+      const cur = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
+      const have = new Set((people.members || []).map(m => m.name));
+      const add = (cur.staff || []).filter(x => !x.retired && !have.has(x.name))
+        .map(x => ({ id: x.id, name: x.name, store: x.store || '' }));
+      if (add.length === 0) return { added: 0 };
+      await persist(remote => {
+        const pp = remote.people || { stores:[...STORES], members:[] };
+        const names = new Set((pp.members || []).map(m => m.name));
+        return { ...remote, people: { ...pp, members: [...(pp.members || []), ...add.filter(a => !names.has(a.name))] } };
+      });
+      return { added: add.length, names: add.map(a => a.name) };
+    } catch (e) { setErr('カリキュラムから取り込めませんでした'); return { added: 0 }; }
+  }
+
   async function savePeople(next) {
     await persist(remote => ({ ...remote, people: next }));
   }
@@ -516,7 +553,8 @@ function ShampooCheckInner() {
 
       {tab === 'people' && (canPeople
         ? <PeopleView people={people} results={results} onSave={savePeople} saving={saving}
-            scorePw={scorePw} peoplePw={peoplePw} onSavePasswords={savePasswords} />
+            scorePw={scorePw} peoplePw={peoplePw} onSavePasswords={savePasswords}
+            onImport={importFromCurriculum} />
         : <PasswordGate title="人員登録" note="スタッフの追加・編集・削除・並べ替えができます"
             expected={peoplePw} master={masterPw}
             onOk={isMaster => { unlock('people'); if (isMaster) unlock('master'); }}
@@ -524,7 +562,7 @@ function ShampooCheckInner() {
 
       {tab === 'check' && view.name === 'list'   && <ListView results={results.filter(r => r.mode === mode)} onOpen={id => setView({ name:'detail', id })} />}
       {tab === 'check' && view.name === 'form'   && (canScore
-        ? <FormView people={people} mode={M} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} saving={saving} />
+        ? <FormView people={people} mode={M} base={view.base} onCancel={() => setView({ name:'list' })} onSave={saveResult} onAddPerson={addPerson} saving={saving} />
         : <PasswordGate title="採点" note="新しく採点する／採点を直すときに必要です"
             expected={scorePw} master={masterPw}
             onOk={isMaster => { unlock('score'); if (isMaster) unlock('master'); }}
@@ -625,19 +663,43 @@ function ListView({ results, onOpen }) {
 const selStyle = { padding:'9px 10px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text };
 
 // ─── 採点フォーム ───────────────────────────────────────────────
-function FormView({ people, mode, base, onCancel, onSave, saving }) {
+function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving }) {
   const [staffId, setStaffId] = useState(base?.staffId || '');
   const [scorer, setScorer]   = useState(base?.scorer || '');
   const [scorerOther, setScorerOther] = useState('');
   const [kind, setKind]       = useState(base?.kind || '');
+  const [subjStore, setSubjStore]     = useState('*');   // '*'=すべて / ''=店舗なし / 店舗名
+  const [scorerStore, setScorerStore] = useState('*');
+  const [adding, setAdding]   = useState(null);          // 'subject' | 'scorer'
+  const [addName, setAddName] = useState('');
+  const [addMsg, setAddMsg]   = useState('');
   const [date, setDate]       = useState(base?.date || today());
   const [memo, setMemo]       = useState(base?.memo || '');
   const [scores, setScores]   = useState(base?.scores || {});
 
   const members = people.members || [];
+  const stores  = people.stores  || [];
   const person  = members.find(s => s.id === staffId);
   const res     = judge(scores, mode.pass);
-  // 人員登録で並べた順にそのまま出す
+  // 人員登録で並べた順のまま、選んだ店舗だけに絞る
+  const byStore = st => st === '*' ? members : members.filter(m => (m.store || '') === st);
+  const subjList   = byStore(subjStore);
+  const scorerList = byStore(scorerStore);
+  const countIn = st => (st === '*' ? members.length : members.filter(m => (m.store || '') === st).length);
+
+  async function doAdd() {
+    const name = addName.trim();
+    if (!name) return;
+    if (members.some(m => m.name === name)) { setAddMsg('同じ名前がすでに登録されています'); return; }
+    const store = adding === 'subject'
+      ? (subjStore === '*' ? '' : subjStore)
+      : (scorerStore === '*' ? '' : scorerStore);
+    const m = await onAddPerson(name, store);
+    if (adding === 'subject') { setStaffId(m.id); if (m.store) setSubjStore(m.store); }
+    else { setScorer(m.name); if (m.store) setScorerStore(m.store); }
+    setAdding(null); setAddName('');
+    setAddMsg(m.fromCurriculum ? '' : '');
+  }
 
   function pick(item, v) {
     setScores(prev => {
@@ -679,19 +741,47 @@ function FormView({ people, mode, base, onCancel, onSave, saving }) {
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>シャンプーをする人</span>
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>チェックを受ける側</span>
-            <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, width:'100%' }}>
-              <option value="">選んでください</option>
-              {members.map(s => <option key={s.id} value={s.id}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
-            </select>
+            <div style={{ display:'flex', gap:'6px' }}>
+              <select value={subjStore} onChange={e => { setSubjStore(e.target.value); setStaffId(''); }}
+                style={{ ...selStyle, flex:'0 0 116px', padding:'9px 6px' }}>
+                <option value="*">すべて({countIn('*')})</option>
+                {stores.map(x => <option key={x} value={x}>{x}({countIn(x)})</option>)}
+                <option value="">店舗なし({countIn('')})</option>
+              </select>
+              <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, flex:1, minWidth:0 }}>
+                <option value="">選んでください</option>
+                {subjList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button onClick={() => { setAdding(adding === 'subject' ? null : 'subject'); setAddName(''); setAddMsg(''); }}
+                title="この店舗に人を追加"
+                style={{ flexShrink:0, width:'36px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <Plus size={15} />
+              </button>
+            </div>
+            {adding === 'subject' && <AddPersonBox store={subjStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} />}
           </label>
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>点数をつける人</span>
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>シャンプーを受けて採点する側</span>
-            <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, width:'100%' }}>
-              <option value="">選んでください</option>
-              {members.map(s => <option key={'s-' + s.id} value={s.name}>{s.name}{s.store ? `（${s.store}）` : ''}</option>)}
-              <option value="__other__">その他（手入力）</option>
-            </select>
+            <div style={{ display:'flex', gap:'6px' }}>
+              <select value={scorerStore} onChange={e => { setScorerStore(e.target.value); setScorer(''); }}
+                style={{ ...selStyle, flex:'0 0 116px', padding:'9px 6px' }}>
+                <option value="*">すべて({countIn('*')})</option>
+                {stores.map(x => <option key={x} value={x}>{x}({countIn(x)})</option>)}
+                <option value="">店舗なし({countIn('')})</option>
+              </select>
+              <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, flex:1, minWidth:0 }}>
+                <option value="">選んでください</option>
+                {scorerList.map(s => <option key={'s-' + s.id} value={s.name}>{s.name}</option>)}
+                <option value="__other__">その他（手入力）</option>
+              </select>
+              <button onClick={() => { setAdding(adding === 'scorer' ? null : 'scorer'); setAddName(''); setAddMsg(''); }}
+                title="この店舗に人を追加"
+                style={{ flexShrink:0, width:'36px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <Plus size={15} />
+              </button>
+            </div>
+            {adding === 'scorer' && <AddPersonBox store={scorerStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} />}
             {scorer === '__other__' && (
               <input value={scorerOther} onChange={e => setScorerOther(e.target.value)} placeholder="名前を入力"
                 style={{ ...selStyle, width:'100%', marginTop:'6px', boxSizing:'border-box' }} />
@@ -989,7 +1079,7 @@ function PasswordGate({ title, note, expected, master, onOk, onCancel }) {
 }
 
 // ─── 人員登録 ───────────────────────────────────────────────────
-function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords }) {
+function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords, onImport }) {
   const [draft, setDraft]       = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
   const [newName, setNewName]   = useState('');
   const [newNameStore, setNewNameStore] = useState('');
@@ -1000,6 +1090,7 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
   const [pw1, setPw1]           = useState(scorePw || '');
   const [pw2, setPw2]           = useState(peoplePw || '');
   const [pwMsg, setPwMsg]       = useState('');
+  const [impMsg, setImpMsg]     = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(people);
 
   const stores  = draft.stores || [];
@@ -1131,6 +1222,14 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
         </div>
       </div>
 
+      <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
+        <button onClick={async () => { const r = await onImport(); setImpMsg(r.added > 0 ? `${r.added}名を取り込みました：${r.names.join('、')}` : 'カリキュラムに未登録の人はいませんでした'); }}
+          style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+          <Plus size={13} /> カリキュラムから未登録の人を取り込む
+        </button>
+        {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
+      </div>
+
       {/* 店舗 */}
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'12px' }}>
         <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'8px' }}>
@@ -1203,5 +1302,27 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
         )}
       </div>
     </>
+  );
+}
+
+// ─── 採点画面からその場で人を足す ───────────────────────────────
+function AddPersonBox({ store, name, setName, msg, onAdd, onCancel }) {
+  const where = store === '*' ? '店舗なし' : (store === '' ? '店舗なし' : store);
+  return (
+    <div style={{ marginTop:'8px', padding:'10px', borderRadius:'9px', background:C.soft, border:`1px solid ${C.line}` }}>
+      <div style={{ fontSize:'11px', color:C.mute, marginBottom:'6px' }}>
+        <b style={{ color:C.text }}>{where}</b> に人を追加します。カリキュラムに同じ名前があれば自動でそちらに紐づきます。
+      </div>
+      <div style={{ display:'flex', gap:'6px' }}>
+        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && onAdd()}
+          placeholder="名前" autoFocus
+          style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+        <button onClick={onAdd}
+          style={{ flexShrink:0, padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>追加</button>
+        <button onClick={onCancel}
+          style={{ flexShrink:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.mute, fontSize:'12px', cursor:'pointer' }}>やめる</button>
+      </div>
+      {msg && <div style={{ fontSize:'11px', color:C.ng, marginTop:'6px' }}>{msg}</div>}
+    </div>
   );
 }

@@ -7,6 +7,7 @@ const CURRICULUM_KEY = 'curriculum_v2';            // スタッフ一覧を読�
 const MASTER_PW_KEY  = 'shift_manager_master_password_v1';   // 総管理者（すべて開く）
 const SCORE_PW_KEY   = 'shampoo_score_pw_v1';                // 採点するためのパスワード
 const PEOPLE_PW_KEY  = 'shampoo_people_pw_v1';               // 人員登録するためのパスワード
+const STATS_PW_KEY   = 'shampoo_stats_pw_v1';                // データを見るためのパスワード
 const WORKSPACES_KEY = 'shift_manager_workspaces_v1';      // 採点する人の候補（トレーナー）を集める
 
 // 勉強会ページのトレーナー名は あだ名・名字だけ の表記がまざっているので本名に寄せる。
@@ -284,6 +285,7 @@ function ShampooCheckInner() {
   const [masterPw, setMasterPw] = useState('');
   const [scorePw, setScorePw]   = useState('');
   const [peoplePw, setPeoplePw] = useState('');
+  const [statsPw, setStatsPw]   = useState('');
   const [unlocked, setUnlocked] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('shampoo_unlocked') || '{}'); } catch (e) { return {}; }
   });
@@ -304,6 +306,7 @@ function ShampooCheckInner() {
     try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
     try { const r = await window.storage.get(SCORE_PW_KEY);  setScorePw(r.value || ''); } catch (e) {}
     try { const r = await window.storage.get(PEOPLE_PW_KEY); setPeoplePw(r.value || ''); } catch (e) {}
+    try { const r = await window.storage.get(STATS_PW_KEY);  setStatsPw(r.value || ''); } catch (e) {}
 
     // 人員がまだ無ければ、カリキュラムと勉強会ページから初回だけ取り込む。
     // 以後はこのアプリの中で追加・編集・削除する（カリキュラムは書き換えない）。
@@ -462,11 +465,12 @@ function ShampooCheckInner() {
   async function savePeople(next) {
     await persist(remote => ({ ...remote, people: next }));
   }
-  async function savePasswords(score, people) {
+  async function savePasswords(score, people, stats) {
     try {
       await window.storage.set(SCORE_PW_KEY, score);
       await window.storage.set(PEOPLE_PW_KEY, people);
-      setScorePw(score); setPeoplePw(people);
+      await window.storage.set(STATS_PW_KEY, stats);
+      setScorePw(score); setPeoplePw(people); setStatsPw(stats);
       return true;
     } catch (e) { setErr('パスワードの保存に失敗しました'); return false; }
   }
@@ -478,6 +482,7 @@ function ShampooCheckInner() {
   // パスワードが未設定の場所は、設定されるまで誰でも使える
   const canScore  = !scorePw  || unlocked.score  || (masterPw && unlocked.master);
   const canPeople = !peoplePw || unlocked.people || (masterPw && unlocked.master);
+  const canStats  = !statsPw  || unlocked.stats  || (masterPw && unlocked.master);
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
@@ -541,11 +546,11 @@ function ShampooCheckInner() {
         <ChevronLeft size={12} /> チェックの選択に戻る
       </button>
       <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text, letterSpacing:'0.02em' }}>データ</h1>
-      {canPeople
+      {canStats
         ? <StatsView people={people} results={results} />
         : <PasswordGate title="データ" note="合格までの日数や平均点などの集計です"
-            expected={peoplePw} master={masterPw}
-            onOk={isMaster => { unlock('people'); if (isMaster) unlock('master'); }}
+            expected={statsPw} master={masterPw}
+            onOk={isMaster => { unlock('stats'); if (isMaster) unlock('master'); }}
             onCancel={() => setMode(null)} />}
     </Shell>
   );
@@ -608,7 +613,7 @@ function ShampooCheckInner() {
 
       {tab === 'people' && (canPeople
         ? <PeopleView people={people} results={results} onSave={savePeople} saving={saving}
-            scorePw={scorePw} peoplePw={peoplePw} onSavePasswords={savePasswords}
+            scorePw={scorePw} peoplePw={peoplePw} statsPw={statsPw} onSavePasswords={savePasswords}
             onImport={importFromCurriculum} />
         : <PasswordGate title="人員登録" note="スタッフの追加・編集・削除・並べ替えができます"
             expected={peoplePw} master={masterPw}
@@ -1474,12 +1479,13 @@ function MemberList({ title, note, list, listKey, stores, used, draft, setDraft,
   );
 }
 
-function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords, onImport }) {
+function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, statsPw, onSavePasswords, onImport }) {
   const [draft, setDraft]   = useState(() => JSON.parse(JSON.stringify({ stores:[], members:[], newgrads:[], ...(people || {}) })));
   const [newStore, setNewStore] = useState('');
   const [pwOpen, setPwOpen] = useState(false);
   const [pw1, setPw1] = useState(scorePw || '');
   const [pw2, setPw2] = useState(peoplePw || '');
+  const [pw3, setPw3] = useState(statsPw || '');
   const [pwMsg, setPwMsg] = useState('');
   const [impMsg, setImpMsg] = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(people);
@@ -1557,24 +1563,27 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
           style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
           <Lock size={13} /> パスワードの設定
           <span style={{ fontSize:'11px', color:C.mute, fontWeight:500 }}>
-            {scorePw ? '採点：設定あり' : '採点：未設定'} ／ {peoplePw ? '人員登録とデータ：設定あり' : '人員登録とデータ：未設定'}
+            {scorePw ? '採点：あり' : '採点：なし'} ／ {peoplePw ? '人員登録：あり' : '人員登録：なし'} ／ {statsPw ? 'データ：あり' : 'データ：なし'}
           </span>
         </button>
         {pwOpen && (
           <div style={{ marginTop:'12px' }}>
             <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
-              閲覧（一覧・詳細・全員の記録）はパスワードなしで誰でも見られます。<br />
-              人員登録のパスワードは「データ」の画面にも使われます。空欄にすると外せます。
+              閲覧（一覧・詳細・全員の記録）はパスワードなしで誰でも見られます。空欄にすると外せます。
             </div>
             <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>採点するときのパスワード
               <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
                 style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
             </label>
-            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>人員登録とデータのパスワード
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>人員登録のパスワード
               <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
                 style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
             </label>
-            <button onClick={async () => { const ok = await onSavePasswords(pw1.trim(), pw2.trim()); setPwMsg(ok ? '保存しました' : ''); }}
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>データのパスワード
+              <input type="text" value={pw3} onChange={e => { setPw3(e.target.value); setPwMsg(''); }}
+                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+            </label>
+            <button onClick={async () => { const ok = await onSavePasswords(pw1.trim(), pw2.trim(), pw3.trim()); setPwMsg(ok ? '保存しました' : ''); }}
               style={{ padding:'9px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
               パスワードを保存
             </button>

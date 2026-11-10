@@ -501,11 +501,35 @@ function ShampooCheckInner() {
         })}
       </div>
 
+      <button onClick={() => setMode('overview')}
+        style={{ width:'100%', textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:`1px solid ${C.line}`, background:C.card, cursor:'pointer', marginBottom:'16px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'7px', fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'4px' }}>
+          <BarChart2 size={15} /> 全員の記録
+        </div>
+        <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.7 }}>
+          誰がいつ受けて、何点で、合格したかを一覧で見られます。まだ受けていない人も出ます。パスワードは要りません。
+        </div>
+      </button>
+
       <button onClick={() => { setMode('curriculum'); setTab('people'); }}
         style={{ display:'flex', alignItems:'center', gap:'6px', padding:'11px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
         <Users size={14} /> 人員登録
       </button>
       <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px' }}>人員登録は2つのチェックで共通です。</div>
+    </Shell>
+  );
+
+  if (mode === 'overview') return (
+    <Shell>
+      <button onClick={() => setMode(null)}
+        style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> チェックの選択に戻る
+      </button>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text, letterSpacing:'0.02em' }}>全員の記録</h1>
+      <OverviewView people={people} results={results} onOpen={(id) => {
+        const r = data.results[id];
+        if (r) { setMode(r.mode); setTab('check'); setView({ name:'detail', id }); }
+      }} />
     </Shell>
   );
 
@@ -1324,5 +1348,143 @@ function AddPersonBox({ store, name, setName, msg, onAdd, onCancel }) {
       </div>
       {msg && <div style={{ fontSize:'11px', color:C.ng, marginTop:'6px' }}>{msg}</div>}
     </div>
+  );
+}
+
+// ─── 全員の記録 ─────────────────────────────────────────────────
+function OverviewView({ people, results, onOpen }) {
+  const [kindMode, setKindMode] = useState('all');   // all | curriculum | level
+  const [year, setYear]   = useState('all');
+  const [store, setStore] = useState('*');
+  const [sort, setSort]   = useState('date');        // date | score | name
+  const [showUndone, setShowUndone] = useState(true);
+
+  const members = people.members || [];
+  const stores  = people.stores  || [];
+  const years = [...new Set(results.map(r => (r.date || '').slice(0,4)).filter(Boolean))].sort().reverse();
+
+  const inScope = r =>
+    (kindMode === 'all' || r.mode === kindMode) &&
+    (year === 'all' || (r.date || '').startsWith(year));
+  const inStore = m => store === '*' || (m.store || '') === store;
+
+  const targets = members.filter(inStore);
+  const targetIds = new Set(targets.map(m => m.id));
+  let rows = results.filter(r => inScope(r) && (targetIds.has(r.staffId) || store === '*'));
+
+  if (sort === 'date')       rows = [...rows].sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  else if (sort === 'score') rows = [...rows].sort((a,b) => (b.total||0) - (a.total||0));
+  else                       rows = [...rows].sort((a,b) => (a.staffName||'').localeCompare(b.staffName||'', 'ja'));
+
+  const doneIds = new Set(rows.map(r => r.staffId));
+  const undone  = targets.filter(m => !doneIds.has(m.id));
+  const passN   = rows.filter(r => r.pass).length;
+  const avg     = rows.length ? Math.round(rows.reduce((n,r) => n + (r.total||0), 0) / rows.length) : null;
+
+  const th = { padding:'8px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign:'left', whiteSpace:'nowrap' };
+  const td = { padding:'8px 10px', fontSize:'12px', color:C.text, whiteSpace:'nowrap' };
+
+  return (
+    <>
+      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'12px' }}>
+        <select value={kindMode} onChange={e => setKindMode(e.target.value)} style={selStyle}>
+          <option value="all">両方のチェック</option>
+          {Object.values(MODES).map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <select value={year} onChange={e => setYear(e.target.value)} style={selStyle}>
+          <option value="all">すべての年</option>
+          {years.map(y => <option key={y} value={y}>{y}年</option>)}
+        </select>
+        <select value={store} onChange={e => setStore(e.target.value)} style={selStyle}>
+          <option value="*">すべての店舗</option>
+          {stores.map(x => <option key={x} value={x}>{x}</option>)}
+          <option value="">店舗なし</option>
+        </select>
+        <select value={sort} onChange={e => setSort(e.target.value)} style={selStyle}>
+          <option value="date">日付順</option>
+          <option value="score">点数順</option>
+          <option value="name">名前順</option>
+        </select>
+      </div>
+
+      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
+        {[
+          { label:'実施', value:`${rows.length}件`, color:C.text },
+          { label:'合格', value:`${passN}件`, color:C.ok },
+          { label:'不合格', value:`${rows.length - passN}件`, color:C.ng },
+          { label:'平均', value: avg === null ? '―' : `${avg}点`, color:C.text },
+          { label:'未実施', value:`${undone.length}名`, color: undone.length ? C.ng : C.mute },
+        ].map(x => (
+          <div key={x.label} style={{ flex:'1 1 90px', padding:'10px 12px', borderRadius:'11px', background:C.card, border:`1px solid ${C.line}` }}>
+            <div style={{ fontSize:'10px', color:C.mute, fontWeight:600 }}>{x.label}</div>
+            <div style={{ fontSize:'16px', fontWeight:700, color:x.color, marginTop:'2px' }}>{x.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ background:C.soft }}>
+                <th style={th}>日付</th>
+                <th style={th}>名前</th>
+                <th style={th}>店舗</th>
+                <th style={th}>チェック</th>
+                <th style={th}>種類</th>
+                <th style={{ ...th, textAlign:'right' }}>点数</th>
+                <th style={th}>合否</th>
+                <th style={th}>採点者</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr><td colSpan={8} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>記録がありません</td></tr>
+              )}
+              {rows.map(r => (
+                <tr key={r.id} onClick={() => onOpen(r.id)}
+                  style={{ borderTop:'1px solid #F2EEE5', cursor:'pointer' }}>
+                  <td style={td}>{fmtDate(r.date)}</td>
+                  <td style={{ ...td, fontWeight:600 }}>{r.staffName}</td>
+                  <td style={{ ...td, color:C.mute }}>{r.store || '―'}</td>
+                  <td style={{ ...td, color:C.mute }}>{MODES[r.mode]?.label.replace('チェック','') || '―'}</td>
+                  <td style={{ ...td, color:C.mute }}>{kindLabel(r.kind)}</td>
+                  <td style={{ ...td, textAlign:'right', fontWeight:700, color: r.pass ? C.ok : C.text }}>
+                    {r.total}<span style={{ fontSize:'10px', color:C.mute, fontWeight:500 }}>/{MAX_TOTAL}</span>
+                  </td>
+                  <td style={td}><Badge pass={r.pass} /></td>
+                  <td style={{ ...td, color:C.mute }}>{r.scorer || '―'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px' }}>
+        <button onClick={() => setShowUndone(v => !v)}
+          style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
+          まだ受けていない人
+          <span style={{ fontSize:'11px', fontWeight:600, color: undone.length ? C.ng : C.mute }}>{undone.length}名</span>
+          <span style={{ fontSize:'10px', color:C.mute, fontWeight:500 }}>{showUndone ? '隠す' : '出す'}</span>
+        </button>
+        {showUndone && (
+          <>
+            <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px', lineHeight:1.7 }}>
+              この絞り込みの中で記録が1件もない人です。採点する側のスタイリストも人員登録に入っているため、ここに出ます。
+            </div>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'8px' }}>
+              {undone.length === 0 && <span style={{ fontSize:'12px', color:C.ok }}>全員実施済みです</span>}
+              {undone.map(m => (
+                <span key={m.id} style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'5px 10px', borderRadius:'999px', background:C.soft, fontSize:'12px', color:C.text }}>
+                  {m.name}
+                  {m.store && <span style={{ fontSize:'10px', color:C.mute }}>{m.store}</span>}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }

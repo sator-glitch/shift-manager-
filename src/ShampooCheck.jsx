@@ -517,7 +517,7 @@ function ShampooCheckInner() {
           <BarChart2 size={15} /> 全員の記録
         </div>
         <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.7 }}>
-          誰がいつ受けて、何点で、合格したかを一覧で見られます。まだ受けていない人も出ます。パスワードは要りません。
+          誰がいつ受けて、何回受けて、何点で合格したかを一覧で見られます。パスワードは要りません。
         </div>
       </button>
 
@@ -535,7 +535,7 @@ function ShampooCheckInner() {
         style={{ display:'flex', alignItems:'center', gap:'6px', padding:'11px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
         <Users size={14} /> 人員登録
       </button>
-      <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px' }}>人員登録は2つのチェックで共通です。</div>
+      <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px' }}>「今年の新卒」と「スタッフ」の2つのリストをここで管理します。</div>
     </Shell>
   );
 

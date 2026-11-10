@@ -727,6 +727,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
   const [staffId, setStaffId] = useState(base?.staffId || '');
   const [scorer, setScorer]   = useState(base?.scorer || '');
   const [scorerOther, setScorerOther] = useState('');
+  const [staffOther, setStaffOther]   = useState('');
   const [kind, setKind]       = useState(base?.kind || '');
   const [subjStore, setSubjStore]     = useState('*');   // '*'=すべて / ''=店舗なし / 店舗名
   const [scorerStore, setScorerStore] = useState('*');
@@ -764,6 +765,28 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
     setAddMsg(m.fromCurriculum ? '' : '');
   }
 
+  // 手入力された名前を人員登録にそのまま保存して、選択済みにする
+  async function saveManual(which) {
+    const raw = which === 'subject' ? staffOther : scorerOther;
+    const name = raw.trim();
+    if (!name) return null;
+    const pool = which === 'subject' ? subjPool : members;
+    const exist = pool.find(m => m.name === name);
+    if (exist) {
+      if (which === 'subject') { setStaffId(exist.id); setStaffOther(''); }
+      else { setScorer(exist.name); setScorerOther(''); }
+      return exist;
+    }
+    const list  = (which === 'subject' && mode.reflect) ? 'newgrads' : 'members';
+    const store = which === 'subject'
+      ? (subjStore === '*' ? '' : subjStore)
+      : (scorerStore === '*' ? '' : scorerStore);
+    const m = await onAddPerson(name, store, list);
+    if (which === 'subject') { setStaffId(m.id); setStaffOther(''); }
+    else { setScorer(m.name); setScorerOther(''); }
+    return m;
+  }
+
   function pick(item, v) {
     setScores(prev => {
       const next = { ...prev };
@@ -776,15 +799,27 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
   }
   const scorerName = scorer === '__other__' ? scorerOther.trim() : scorer.trim();
 
-  function submit() {
-    if (!staffId) { alert('シャンプーをする人を選んでください'); return; }
-    if (!scorerName) { alert('点数をつける人を選んでください'); return; }
+  async function submit() {
     if (!kind) { alert('ショートかロングかを選んでください'); return; }
+    // 手入力のままなら、保存する前に人員登録へ入れる
+    let who = person;
+    if (staffId === '__other__') {
+      who = await saveManual('subject');
+      if (!who) { alert('シャンプーをする人の名前を入れてください'); return; }
+    }
+    if (!who) { alert('シャンプーをする人を選んでください'); return; }
+    let scName = scorerName;
+    if (scorer === '__other__') {
+      const m = await saveManual('scorer');
+      if (!m) { alert('点数をつける人の名前を入れてください'); return; }
+      scName = m.name;
+    }
+    if (!scName) { alert('点数をつける人を選んでください'); return; }
     if (res.unscored > 0) { alert(`未入力が${res.unscored}項目あります`); return; }
     onSave({
       id: base?.id || uid(), itemSet: ITEM_SET, mode: mode.key,
-      staffId, staffName: person?.name || '', store: person?.store || '', kind,
-      scorer: scorerName, date, memo: memo.trim(), scores,
+      staffId: who.id, staffName: who.name || '', store: who.store || '', kind,
+      scorer: scName, date, memo: memo.trim(), scores,
       total: res.total, pass: res.pass,
       reasons: res.reasons.map(r => r.text),
       updatedAt: new Date().toISOString(),
@@ -816,6 +851,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
               <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, flex:1, minWidth:0 }}>
                 <option value="">{subjList.length === 0 ? '該当する人がいません' : '選んでください'}</option>
                 {subjList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value="__other__">その他（手入力）</option>
               </select>
               <button onClick={() => { setAdding(adding === 'subject' ? null : 'subject'); setAddName(''); setAddMsg(''); }}
                 title="この店舗に人を追加"
@@ -823,6 +859,11 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
                 <Plus size={15} />
               </button>
             </div>
+            {staffId === '__other__' && (
+              <ManualNameBox value={staffOther} setValue={setStaffOther} onDone={() => saveManual('subject')}
+                where={subjStore === '*' ? '店舗なし' : (subjStore || '店舗なし')}
+                list={mode.reflect ? '今年の新卒' : 'スタッフ'} />
+            )}
             {mode.reflect && subjPool.length === 0 && (
               <div style={{ marginTop:'6px', fontSize:'11px', color:C.ng, lineHeight:1.7 }}>
                 今年の新卒がまだ登録されていません。人員登録の「新卒」に追加するか、右の＋でここから追加してください。
@@ -853,8 +894,9 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
             </div>
             {adding === 'scorer' && <AddPersonBox store={scorerStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} />}
             {scorer === '__other__' && (
-              <input value={scorerOther} onChange={e => setScorerOther(e.target.value)} placeholder="名前を入力"
-                style={{ ...selStyle, width:'100%', marginTop:'6px', boxSizing:'border-box' }} />
+              <ManualNameBox value={scorerOther} setValue={setScorerOther} onDone={() => saveManual('scorer')}
+                where={scorerStore === '*' ? '店舗なし' : (scorerStore || '店舗なし')}
+                list="スタッフ" />
             )}
           </label>
           <label style={lblStyle}>
@@ -881,7 +923,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
             })}
           </div>
         </div>
-        {staffId && scorerName && kind && (
+        {staffId && staffId !== '__other__' && scorerName && scorer !== '__other__' && kind && (
           <div style={{ marginTop:'12px', padding:'9px 12px', borderRadius:'9px', background:C.soft, fontSize:'12px', color:C.text }}>
             <b>{person?.name}</b> さんの<b>{kindLabel(kind)}</b>シャンプーを <b>{scorerName}</b> さんが採点します
           </div>
@@ -1776,5 +1818,34 @@ function StatsView({ people, results }) {
       </>
       )}
     </>
+  );
+}
+
+// ─── 手入力した名前はそのまま人員登録に保存する ─────────────────
+function ManualNameBox({ value, setValue, onDone, where, list }) {
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    if (!value.trim() || busy) return;
+    setBusy(true);
+    await onDone();
+    setBusy(false);
+  }
+  return (
+    <div style={{ marginTop:'6px' }}>
+      <div style={{ display:'flex', gap:'6px' }}>
+        <input value={value} onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && go()} onBlur={go}
+          placeholder="名前を入力" autoFocus
+          style={{ ...selStyle, flex:1, minWidth:0, boxSizing:'border-box' }} />
+        <button onClick={go} disabled={busy}
+          style={{ flexShrink:0, padding:'9px 14px', borderRadius:'9px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+          {busy ? '保存中…' : '決定'}
+        </button>
+      </div>
+      <div style={{ fontSize:'11px', color:C.mute, marginTop:'5px', lineHeight:1.7 }}>
+        入れた名前は<b style={{ color:C.text }}>{list}</b>（{where}）に自動で登録されます。
+        カリキュラムに同じ名前があれば、そちらに紐づけます。
+      </div>
+    </div>
   );
 }

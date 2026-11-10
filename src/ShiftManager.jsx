@@ -1492,7 +1492,6 @@ export default function ShiftManager() {
           <div style={{ marginTop: '8px' }}>
             <a href="/shampoo.html" style={{ width: '100%', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 18px', borderRadius: '12px', border: '1px solid #E2DCCC', background: '#FFFFFF', color: '#1F1C18', fontSize: '14px', fontWeight: 700, cursor: 'pointer', textDecoration: 'none' }}>
               <Droplets size={16} /> シャンプーチェック
-              <span style={{ fontSize: '10px', fontWeight: 600, color: '#9C9486', background: '#F3EFE6', borderRadius: '999px', padding: '2px 8px' }}>準備中</span>
             </a>
           </div>
 

@@ -419,7 +419,7 @@ function ShampooCheckInner() {
   }
   // 採点画面からその場で人を足す。カリキュラムに同名がいればそのIDを使い、
   // 新卒カリキュラムチェックの合格がちゃんと反映されるようにする
-  async function addPerson(name, store) {
+  async function addPerson(name, store, newgrad) {
     let id = uid(), fromCurriculum = false, st = store;
     try {
       const r = await window.storage.get(CURRICULUM_KEY);
@@ -427,7 +427,7 @@ function ShampooCheckInner() {
       const hit = (cur.staff || []).find(x => !x.retired && x.name === name);
       if (hit) { id = hit.id; fromCurriculum = true; if (!st) st = hit.store || ''; }
     } catch (e) {}
-    const m = { id, name, store: st || '' };
+    const m = { id, name, store: st || '', ...(newgrad ? { newgrad: true } : {}) };
     await persist(remote => {
       const pp = remote.people || { stores:[...STORES], members:[] };
       if ((pp.members || []).some(x => x.id === m.id || x.name === m.name)) return remote;
@@ -694,6 +694,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
   const [kind, setKind]       = useState(base?.kind || '');
   const [subjStore, setSubjStore]     = useState('*');   // '*'=すべて / ''=店舗なし / 店舗名
   const [scorerStore, setScorerStore] = useState('*');
+  const [onlyNew, setOnlyNew] = useState(!!mode.reflect); // 新卒カリキュラムチェックは新卒だけ出す
   const [adding, setAdding]   = useState(null);          // 'subject' | 'scorer'
   const [addName, setAddName] = useState('');
   const [addMsg, setAddMsg]   = useState('');
@@ -706,10 +707,11 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
   const person  = members.find(s => s.id === staffId);
   const res     = judge(scores, mode.pass);
   // 人員登録で並べた順のまま、選んだ店舗だけに絞る
-  const byStore = st => st === '*' ? members : members.filter(m => (m.store || '') === st);
-  const subjList   = byStore(subjStore);
-  const scorerList = byStore(scorerStore);
-  const countIn = st => (st === '*' ? members.length : members.filter(m => (m.store || '') === st).length);
+  const byStore = (list, st) => st === '*' ? list : list.filter(m => (m.store || '') === st);
+  const subjPool   = (mode.reflect && onlyNew) ? members.filter(m => m.newgrad) : members;
+  const subjList   = byStore(subjPool, subjStore);
+  const scorerList = byStore(members, scorerStore);
+  const countIn = (list, st) => (st === '*' ? list.length : list.filter(m => (m.store || '') === st).length);
 
   async function doAdd() {
     const name = addName.trim();
@@ -718,7 +720,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
     const store = adding === 'subject'
       ? (subjStore === '*' ? '' : subjStore)
       : (scorerStore === '*' ? '' : scorerStore);
-    const m = await onAddPerson(name, store);
+    const m = await onAddPerson(name, store, adding === 'subject' && mode.reflect && onlyNew);
     if (adding === 'subject') { setStaffId(m.id); if (m.store) setSubjStore(m.store); }
     else { setScorer(m.name); if (m.store) setScorerStore(m.store); }
     setAdding(null); setAddName('');
@@ -764,16 +766,25 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:'12px' }}>
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>シャンプーをする人</span>
-            <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>チェックを受ける側</span>
+            <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>
+              チェックを受ける側
+              {mode.reflect && (
+                <button onClick={e => { e.preventDefault(); setOnlyNew(v => !v); setStaffId(''); }}
+                  style={{ marginLeft:'8px', background:'none', border:'none', padding:0, cursor:'pointer',
+                    color: onlyNew ? C.ok : C.mute, fontWeight:700, fontSize:'11px', textDecoration:'underline' }}>
+                  {onlyNew ? '新卒のみ' : '全員から選ぶ'}
+                </button>
+              )}
+            </span>
             <div style={{ display:'flex', gap:'6px' }}>
               <select value={subjStore} onChange={e => { setSubjStore(e.target.value); setStaffId(''); }}
                 style={{ ...selStyle, flex:'0 0 116px', padding:'9px 6px' }}>
-                <option value="*">すべて({countIn('*')})</option>
-                {stores.map(x => <option key={x} value={x}>{x}({countIn(x)})</option>)}
-                <option value="">店舗なし({countIn('')})</option>
+                <option value="*">すべて({countIn(subjPool,'*')})</option>
+                {stores.map(x => <option key={x} value={x}>{x}({countIn(subjPool,x)})</option>)}
+                <option value="">店舗なし({countIn(subjPool,'')})</option>
               </select>
               <select value={staffId} onChange={e => setStaffId(e.target.value)} style={{ ...selStyle, flex:1, minWidth:0 }}>
-                <option value="">選んでください</option>
+                <option value="">{subjList.length === 0 ? '該当する人がいません' : '選んでください'}</option>
                 {subjList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <button onClick={() => { setAdding(adding === 'subject' ? null : 'subject'); setAddName(''); setAddMsg(''); }}
@@ -782,7 +793,12 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
                 <Plus size={15} />
               </button>
             </div>
-            {adding === 'subject' && <AddPersonBox store={subjStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} />}
+            {mode.reflect && onlyNew && subjPool.length === 0 && (
+              <div style={{ marginTop:'6px', fontSize:'11px', color:C.ng, lineHeight:1.7 }}>
+                新卒がまだ登録されていません。人員登録で「新卒」を押すか、右の＋でここから追加してください。
+              </div>
+            )}
+            {adding === 'subject' && <AddPersonBox store={subjStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} newgrad={mode.reflect && onlyNew} />}
           </label>
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>点数をつける人</span>
@@ -790,9 +806,9 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
             <div style={{ display:'flex', gap:'6px' }}>
               <select value={scorerStore} onChange={e => { setScorerStore(e.target.value); setScorer(''); }}
                 style={{ ...selStyle, flex:'0 0 116px', padding:'9px 6px' }}>
-                <option value="*">すべて({countIn('*')})</option>
-                {stores.map(x => <option key={x} value={x}>{x}({countIn(x)})</option>)}
-                <option value="">店舗なし({countIn('')})</option>
+                <option value="*">すべて({countIn(members,'*')})</option>
+                {stores.map(x => <option key={x} value={x}>{x}({countIn(members,x)})</option>)}
+                <option value="">店舗なし({countIn(members,'')})</option>
               </select>
               <select value={scorer} onChange={e => setScorer(e.target.value)} style={{ ...selStyle, flex:1, minWidth:0 }}>
                 <option value="">選んでください</option>
@@ -1107,6 +1123,7 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
   const [draft, setDraft]       = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
   const [newName, setNewName]   = useState('');
   const [newNameStore, setNewNameStore] = useState('');
+  const [newIsGrad, setNewIsGrad] = useState(false);
   const [newStore, setNewStore] = useState('');
   const [drag, setDrag]         = useState(null);
   const [over, setOver]         = useState(null);
@@ -1136,7 +1153,7 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
     const name = newName.trim();
     if (!name) return;
     if (members.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
-    setDraft(d => ({ ...d, members: [...d.members, { id: uid(), name, store: newNameStore }] }));
+    setDraft(d => ({ ...d, members: [...d.members, { id: uid(), name, store: newNameStore, newgrad: newIsGrad }] }));
     setNewName('');
   }
   // ドラッグで並べ替え（落とした行の手前に入る）
@@ -1191,7 +1208,12 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
         <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
-          スタッフ<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{members.length}名</span>
+          スタッフ<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>
+            {members.length}名／新卒 {members.filter(m => m.newgrad).length}名
+          </span>
+        </div>
+        <div style={{ padding:'7px 14px', fontSize:'11px', color:C.mute, borderTop:'1px solid #F2EEE5', lineHeight:1.7 }}>
+          「新卒」を押した人だけが新卒カリキュラムチェックの受ける側に出ます。来年入社したら登録して、ここを押してください。
         </div>
         {members.map(m => {
           const rowOver = over === m.id;
@@ -1218,6 +1240,13 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
                 <option value="">店舗なし</option>
                 {stores.map(x => <option key={x} value={x}>{x}</option>)}
               </select>
+              <button onClick={() => setMember(m.id, { newgrad: !m.newgrad })}
+                title="新卒カリキュラムチェックの対象にする"
+                style={{ flexShrink:0, padding:'7px 10px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
+                  border: m.newgrad ? 'none' : `1px solid ${C.line}`,
+                  background: m.newgrad ? C.ok : '#FFF', color: m.newgrad ? '#FFF' : '#C2BBA9' }}>
+                新卒
+              </button>
               <button onClick={() => delMember(m)} title="削除"
                 style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                 <Trash2 size={13} />
@@ -1239,6 +1268,12 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
             <option value="">店舗なし</option>
             {stores.map(x => <option key={x} value={x}>{x}</option>)}
           </select>
+          <button onClick={() => setNewIsGrad(v => !v)}
+            style={{ flexShrink:0, padding:'7px 10px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
+              border: newIsGrad ? 'none' : `1px solid ${C.line}`,
+              background: newIsGrad ? C.ok : '#FFF', color: newIsGrad ? '#FFF' : '#C2BBA9' }}>
+            新卒
+          </button>
           <button onClick={addMember}
             style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
             <Plus size={13} /> 追加
@@ -1330,12 +1365,12 @@ function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSave
 }
 
 // ─── 採点画面からその場で人を足す ───────────────────────────────
-function AddPersonBox({ store, name, setName, msg, onAdd, onCancel }) {
+function AddPersonBox({ store, name, setName, msg, onAdd, onCancel, newgrad }) {
   const where = store === '*' ? '店舗なし' : (store === '' ? '店舗なし' : store);
   return (
     <div style={{ marginTop:'8px', padding:'10px', borderRadius:'9px', background:C.soft, border:`1px solid ${C.line}` }}>
       <div style={{ fontSize:'11px', color:C.mute, marginBottom:'6px' }}>
-        <b style={{ color:C.text }}>{where}</b> に人を追加します。カリキュラムに同じ名前があれば自動でそちらに紐づきます。
+        <b style={{ color:C.text }}>{where}</b> に{newgrad ? '新卒として' : ''}人を追加します。カリキュラムに同じ名前があれば自動でそちらに紐づきます。
       </div>
       <div style={{ display:'flex', gap:'6px' }}>
         <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && onAdd()}
@@ -1356,33 +1391,51 @@ function OverviewView({ people, results, onOpen }) {
   const [kindMode, setKindMode] = useState('all');   // all | curriculum | level
   const [year, setYear]   = useState('all');
   const [store, setStore] = useState('*');
-  const [sort, setSort]   = useState('date');        // date | score | name
-  const [showUndone, setShowUndone] = useState(true);
+  const [sort, setSort]   = useState('date');        // date | score | name | count
+  const [grouped, setGrouped] = useState(true);      // 受けた人ごと ⇄ 1件ずつ
 
   const members = people.members || [];
   const stores  = people.stores  || [];
+  const storeOf = id => (members.find(m => m.id === id) || {}).store;
   const years = [...new Set(results.map(r => (r.date || '').slice(0,4)).filter(Boolean))].sort().reverse();
 
-  const inScope = r =>
+  const scoped = results.filter(r =>
     (kindMode === 'all' || r.mode === kindMode) &&
-    (year === 'all' || (r.date || '').startsWith(year));
-  const inStore = m => store === '*' || (m.store || '') === store;
+    (year === 'all' || (r.date || '').startsWith(year)) &&
+    (store === '*' || (r.store || storeOf(r.staffId) || '') === store));
 
-  const targets = members.filter(inStore);
-  const targetIds = new Set(targets.map(m => m.id));
-  let rows = results.filter(r => inScope(r) && (targetIds.has(r.staffId) || store === '*'));
+  // 受けた人ごとにまとめる
+  const byPerson = {};
+  scoped.forEach(r => {
+    const k = r.staffId || r.staffName;
+    if (!byPerson[k]) byPerson[k] = { key:k, name:r.staffName, store:r.store || storeOf(r.staffId) || '', list:[] };
+    byPerson[k].list.push(r);
+  });
+  let persons = Object.values(byPerson);
+  persons.forEach(p => {
+    p.list.sort((a,b) => (a.date||'').localeCompare(b.date||''));   // 古い順＝1回目から
+    p.count = p.list.length;
+    p.latest = p.list[p.list.length - 1];
+    p.best = p.list.reduce((m,x) => (x.total||0) > (m.total||0) ? x : m, p.list[0]);
+    p.passCount = p.list.filter(x => x.pass).length;
+  });
 
-  if (sort === 'date')       rows = [...rows].sort((a,b) => (b.date||'').localeCompare(a.date||''));
-  else if (sort === 'score') rows = [...rows].sort((a,b) => (b.total||0) - (a.total||0));
-  else                       rows = [...rows].sort((a,b) => (a.staffName||'').localeCompare(b.staffName||'', 'ja'));
+  if (sort === 'count')      persons.sort((a,b) => b.count - a.count || (b.latest.total||0) - (a.latest.total||0));
+  else if (sort === 'score') persons.sort((a,b) => (b.latest.total||0) - (a.latest.total||0));
+  else if (sort === 'name')  persons.sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ja'));
+  else                       persons.sort((a,b) => (b.latest.date||'').localeCompare(a.latest.date||''));
 
-  const doneIds = new Set(rows.map(r => r.staffId));
-  const undone  = targets.filter(m => !doneIds.has(m.id));
-  const passN   = rows.filter(r => r.pass).length;
-  const avg     = rows.length ? Math.round(rows.reduce((n,r) => n + (r.total||0), 0) / rows.length) : null;
+  let flat = [...scoped];
+  if (sort === 'score')     flat.sort((a,b) => (b.total||0) - (a.total||0));
+  else if (sort === 'name') flat.sort((a,b) => (a.staffName||'').localeCompare(b.staffName||'', 'ja'));
+  else                      flat.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  const passN = scoped.filter(r => r.pass).length;
+  const avg   = scoped.length ? Math.round(scoped.reduce((n,r) => n + (r.total||0), 0) / scoped.length) : null;
 
   const th = { padding:'8px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign:'left', whiteSpace:'nowrap' };
-  const td = { padding:'8px 10px', fontSize:'12px', color:C.text, whiteSpace:'nowrap' };
+  const td = { padding:'8px 10px', fontSize:'12px', color:C.text, verticalAlign:'top' };
+  const nw = { ...td, whiteSpace:'nowrap' };
 
   return (
     <>
@@ -1403,17 +1456,28 @@ function OverviewView({ people, results, onOpen }) {
         <select value={sort} onChange={e => setSort(e.target.value)} style={selStyle}>
           <option value="date">日付順</option>
           <option value="score">点数順</option>
+          <option value="count">回数順</option>
           <option value="name">名前順</option>
         </select>
+        <div style={{ display:'flex', gap:'3px', background:C.soft, borderRadius:'9px', padding:'3px' }}>
+          {[{ k:true, l:'受けた人ごと' }, { k:false, l:'1件ずつ' }].map(o => (
+            <button key={String(o.k)} onClick={() => setGrouped(o.k)}
+              style={{ padding:'6px 12px', borderRadius:'7px', border:'none', fontSize:'12px', cursor:'pointer',
+                background: grouped === o.k ? '#FFF' : 'transparent',
+                color: grouped === o.k ? C.text : C.mute, fontWeight: grouped === o.k ? 600 : 500 }}>
+              {o.l}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
         {[
-          { label:'実施', value:`${rows.length}件`, color:C.text },
-          { label:'合格', value:`${passN}件`, color:C.ok },
-          { label:'不合格', value:`${rows.length - passN}件`, color:C.ng },
+          { label:'受けた人', value:`${persons.length}名`, color:C.text },
+          { label:'のべ回数', value:`${scoped.length}回`, color:C.text },
+          { label:'合格', value:`${passN}回`, color:C.ok },
+          { label:'不合格', value:`${scoped.length - passN}回`, color:C.ng },
           { label:'平均', value: avg === null ? '―' : `${avg}点`, color:C.text },
-          { label:'未実施', value:`${undone.length}名`, color: undone.length ? C.ng : C.mute },
         ].map(x => (
           <div key={x.label} style={{ flex:'1 1 90px', padding:'10px 12px', borderRadius:'11px', background:C.card, border:`1px solid ${C.line}` }}>
             <div style={{ fontSize:'10px', color:C.mute, fontWeight:600 }}>{x.label}</div>
@@ -1422,68 +1486,104 @@ function OverviewView({ people, results, onOpen }) {
         ))}
       </div>
 
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden' }}>
         <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ background:C.soft }}>
-                <th style={th}>日付</th>
-                <th style={th}>名前</th>
-                <th style={th}>店舗</th>
-                <th style={th}>チェック</th>
-                <th style={th}>種類</th>
-                <th style={{ ...th, textAlign:'right' }}>点数</th>
-                <th style={th}>合否</th>
-                <th style={th}>採点者</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr><td colSpan={8} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>記録がありません</td></tr>
-              )}
-              {rows.map(r => (
-                <tr key={r.id} onClick={() => onOpen(r.id)}
-                  style={{ borderTop:'1px solid #F2EEE5', cursor:'pointer' }}>
-                  <td style={td}>{fmtDate(r.date)}</td>
-                  <td style={{ ...td, fontWeight:600 }}>{r.staffName}</td>
-                  <td style={{ ...td, color:C.mute }}>{r.store || '―'}</td>
-                  <td style={{ ...td, color:C.mute }}>{MODES[r.mode]?.label.replace('チェック','') || '―'}</td>
-                  <td style={{ ...td, color:C.mute }}>{kindLabel(r.kind)}</td>
-                  <td style={{ ...td, textAlign:'right', fontWeight:700, color: r.pass ? C.ok : C.text }}>
-                    {r.total}<span style={{ fontSize:'10px', color:C.mute, fontWeight:500 }}>/{MAX_TOTAL}</span>
-                  </td>
-                  <td style={td}><Badge pass={r.pass} /></td>
-                  <td style={{ ...td, color:C.mute }}>{r.scorer || '―'}</td>
+          {grouped ? (
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead>
+                <tr style={{ background:C.soft }}>
+                  <th style={th}>名前</th>
+                  <th style={th}>店舗</th>
+                  <th style={{ ...th, textAlign:'center' }}>回数</th>
+                  <th style={th}>受けた日と点数</th>
+                  <th style={th}>メモ</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {persons.length === 0 && (
+                  <tr><td colSpan={5} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>記録がありません</td></tr>
+                )}
+                {persons.map(p => (
+                  <tr key={p.key} style={{ borderTop:'1px solid #F2EEE5' }}>
+                    <td style={{ ...nw, fontWeight:600 }}>{p.name}</td>
+                    <td style={{ ...nw, color:C.mute }}>{p.store || '―'}</td>
+                    <td style={{ ...nw, textAlign:'center' }}>
+                      <span style={{ display:'inline-block', minWidth:'22px', padding:'2px 7px', borderRadius:'999px', background:C.soft, fontSize:'12px', fontWeight:700 }}>
+                        {p.count}
+                      </span>
+                      {p.passCount > 0 && <div style={{ fontSize:'10px', color:C.ok, marginTop:'2px' }}>合格{p.passCount}</div>}
+                    </td>
+                    <td style={td}>
+                      {p.list.map((r, i) => (
+                        <div key={r.id} onClick={() => onOpen(r.id)}
+                          style={{ display:'flex', alignItems:'center', gap:'7px', padding:'2px 0', cursor:'pointer', flexWrap:'wrap' }}>
+                          <span style={{ fontSize:'10px', color:C.mute, width:'34px' }}>{i+1}回目</span>
+                          <span style={{ whiteSpace:'nowrap' }}>{fmtDate(r.date)}</span>
+                          <span style={{ fontSize:'10px', color:C.mute }}>{MODES[r.mode]?.label.replace('チェック','')}・{kindLabel(r.kind)}</span>
+                          <span style={{ fontWeight:700, color: r.pass ? C.ok : C.text, whiteSpace:'nowrap' }}>{r.total}</span>
+                          <Badge pass={r.pass} />
+                          {i > 0 && (
+                            <span style={{ fontSize:'10px', fontWeight:700, color: r.total >= p.list[i-1].total ? C.ok : C.ng }}>
+                              {r.total - p.list[i-1].total >= 0 ? '+' : ''}{r.total - p.list[i-1].total}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </td>
+                    <td style={{ ...td, color:C.mute, fontSize:'11px', lineHeight:1.7, minWidth:'160px', whiteSpace:'pre-wrap' }}>
+                      {p.list.filter(r => r.memo).map(r => (
+                        <div key={r.id} style={{ marginBottom:'4px' }}>
+                          <span style={{ color:'#C2BBA9' }}>{fmtDate(r.date)}</span> {r.memo}
+                        </div>
+                      ))}
+                      {p.list.every(r => !r.memo) && '―'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead>
+                <tr style={{ background:C.soft }}>
+                  <th style={th}>日付</th>
+                  <th style={th}>名前</th>
+                  <th style={th}>店舗</th>
+                  <th style={th}>チェック</th>
+                  <th style={th}>種類</th>
+                  <th style={{ ...th, textAlign:'right' }}>点数</th>
+                  <th style={th}>合否</th>
+                  <th style={th}>採点者</th>
+                  <th style={th}>メモ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {flat.length === 0 && (
+                  <tr><td colSpan={9} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>記録がありません</td></tr>
+                )}
+                {flat.map(r => (
+                  <tr key={r.id} onClick={() => onOpen(r.id)} style={{ borderTop:'1px solid #F2EEE5', cursor:'pointer' }}>
+                    <td style={nw}>{fmtDate(r.date)}</td>
+                    <td style={{ ...nw, fontWeight:600 }}>{r.staffName}</td>
+                    <td style={{ ...nw, color:C.mute }}>{r.store || '―'}</td>
+                    <td style={{ ...nw, color:C.mute }}>{MODES[r.mode]?.label.replace('チェック','') || '―'}</td>
+                    <td style={{ ...nw, color:C.mute }}>{kindLabel(r.kind)}</td>
+                    <td style={{ ...nw, textAlign:'right', fontWeight:700, color: r.pass ? C.ok : C.text }}>
+                      {r.total}<span style={{ fontSize:'10px', color:C.mute, fontWeight:500 }}>/{MAX_TOTAL}</span>
+                    </td>
+                    <td style={nw}><Badge pass={r.pass} /></td>
+                    <td style={{ ...nw, color:C.mute }}>{r.scorer || '―'}</td>
+                    <td style={{ ...td, color:C.mute, fontSize:'11px', minWidth:'160px', whiteSpace:'pre-wrap' }}>{r.memo || '―'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px' }}>
-        <button onClick={() => setShowUndone(v => !v)}
-          style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
-          まだ受けていない人
-          <span style={{ fontSize:'11px', fontWeight:600, color: undone.length ? C.ng : C.mute }}>{undone.length}名</span>
-          <span style={{ fontSize:'10px', color:C.mute, fontWeight:500 }}>{showUndone ? '隠す' : '出す'}</span>
-        </button>
-        {showUndone && (
-          <>
-            <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px', lineHeight:1.7 }}>
-              この絞り込みの中で記録が1件もない人です。採点する側のスタイリストも人員登録に入っているため、ここに出ます。
-            </div>
-            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'8px' }}>
-              {undone.length === 0 && <span style={{ fontSize:'12px', color:C.ok }}>全員実施済みです</span>}
-              {undone.map(m => (
-                <span key={m.id} style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'5px 10px', borderRadius:'999px', background:C.soft, fontSize:'12px', color:C.text }}>
-                  {m.name}
-                  {m.store && <span style={{ fontSize:'10px', color:C.mute }}>{m.store}</span>}
-                </span>
-              ))}
-            </div>
-          </>
-        )}
+      <div style={{ fontSize:'11px', color:C.mute, marginTop:'10px', lineHeight:1.7 }}>
+        全員が受けるわけではないので、ここには受けた人だけが出ます。行を押すとその回の詳細（60項目の点数）が開きます。
       </div>
     </>
   );

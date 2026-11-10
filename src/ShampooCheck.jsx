@@ -377,7 +377,10 @@ function ShampooCheckInner() {
     setSaving(false);
   }, []);
 
-  const people  = data.people || { stores: [...STORES], members: [] };
+  const people  = useMemo(() => {
+    const p = data.people || { stores: [...STORES], members: [] };
+    return { stores: p.stores || [...STORES], members: p.members || [], newgrads: p.newgrads || [] };
+  }, [data]);
   const results = useMemo(() => Object.values(data.results || {})
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')), [data]);
 
@@ -419,7 +422,7 @@ function ShampooCheckInner() {
   }
   // 採点画面からその場で人を足す。カリキュラムに同名がいればそのIDを使い、
   // 新卒カリキュラムチェックの合格がちゃんと反映されるようにする
-  async function addPerson(name, store, newgrad) {
+  async function addPerson(name, store, list = 'members') {
     let id = uid(), fromCurriculum = false, st = store;
     try {
       const r = await window.storage.get(CURRICULUM_KEY);
@@ -427,11 +430,12 @@ function ShampooCheckInner() {
       const hit = (cur.staff || []).find(x => !x.retired && x.name === name);
       if (hit) { id = hit.id; fromCurriculum = true; if (!st) st = hit.store || ''; }
     } catch (e) {}
-    const m = { id, name, store: st || '', ...(newgrad ? { newgrad: true } : {}) };
+    const m = { id, name, store: st || '' };
     await persist(remote => {
-      const pp = remote.people || { stores:[...STORES], members:[] };
-      if ((pp.members || []).some(x => x.id === m.id || x.name === m.name)) return remote;
-      return { ...remote, people: { ...pp, members: [...(pp.members || []), m] } };
+      const pp = remote.people || { stores:[...STORES], members:[], newgrads:[] };
+      const cur = pp[list] || [];
+      if (cur.some(x => x.id === m.id || x.name === m.name)) return remote;
+      return { ...remote, people: { ...pp, [list]: [...cur, m] } };
     });
     return { ...m, fromCurriculum };
   }
@@ -442,6 +446,7 @@ function ShampooCheckInner() {
       const r = await window.storage.get(CURRICULUM_KEY);
       const cur = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
       const have = new Set((people.members || []).map(m => m.name));
+      // 共通リストにだけ入れる（新卒リストは毎年こちらで登録する）
       const add = (cur.staff || []).filter(x => !x.retired && !have.has(x.name))
         .map(x => ({ id: x.id, name: x.name, store: x.store || '' }));
       if (add.length === 0) return { added: 0 };
@@ -511,11 +516,37 @@ function ShampooCheckInner() {
         </div>
       </button>
 
+      <button onClick={() => setMode('stats')}
+        style={{ width:'100%', textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:`1px solid ${C.line}`, background:C.card, cursor:'pointer', marginBottom:'16px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'7px', fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'4px' }}>
+          <Lock size={14} /> データ
+        </div>
+        <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.7 }}>
+          合格までにかかった日数、平均点、合格率、弱い項目などをまとめて見ます。パスワードが必要です。
+        </div>
+      </button>
+
       <button onClick={() => { setMode('curriculum'); setTab('people'); }}
         style={{ display:'flex', alignItems:'center', gap:'6px', padding:'11px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
         <Users size={14} /> 人員登録
       </button>
       <div style={{ fontSize:'11px', color:C.mute, marginTop:'8px' }}>人員登録は2つのチェックで共通です。</div>
+    </Shell>
+  );
+
+  if (mode === 'stats') return (
+    <Shell>
+      <button onClick={() => setMode(null)}
+        style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> チェックの選択に戻る
+      </button>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text, letterSpacing:'0.02em' }}>データ</h1>
+      {canPeople
+        ? <StatsView people={people} results={results} />
+        : <PasswordGate title="データ" note="合格までの日数や平均点などの集計です"
+            expected={peoplePw} master={masterPw}
+            onOk={isMaster => { unlock('people'); if (isMaster) unlock('master'); }}
+            onCancel={() => setMode(null)} />}
     </Shell>
   );
 
@@ -694,7 +725,6 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
   const [kind, setKind]       = useState(base?.kind || '');
   const [subjStore, setSubjStore]     = useState('*');   // '*'=すべて / ''=店舗なし / 店舗名
   const [scorerStore, setScorerStore] = useState('*');
-  const [onlyNew, setOnlyNew] = useState(!!mode.reflect); // 新卒カリキュラムチェックは新卒だけ出す
   const [adding, setAdding]   = useState(null);          // 'subject' | 'scorer'
   const [addName, setAddName] = useState('');
   const [addMsg, setAddMsg]   = useState('');
@@ -704,11 +734,13 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
 
   const members = people.members || [];
   const stores  = people.stores  || [];
-  const person  = members.find(s => s.id === staffId);
+  const person  = subjPoolOf().find(s => s.id === staffId);
   const res     = judge(scores, mode.pass);
+  function subjPoolOf() { return mode.reflect ? (people.newgrads || []) : (people.members || []); }
   // 人員登録で並べた順のまま、選んだ店舗だけに絞る
   const byStore = (list, st) => st === '*' ? list : list.filter(m => (m.store || '') === st);
-  const subjPool   = (mode.reflect && onlyNew) ? members.filter(m => m.newgrad) : members;
+  // 新卒カリキュラムチェックの受ける側は新卒リスト、技術レベルチェックは共通リスト
+  const subjPool   = mode.reflect ? (people.newgrads || []) : members;
   const subjList   = byStore(subjPool, subjStore);
   const scorerList = byStore(members, scorerStore);
   const countIn = (list, st) => (st === '*' ? list.length : list.filter(m => (m.store || '') === st).length);
@@ -720,7 +752,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
     const store = adding === 'subject'
       ? (subjStore === '*' ? '' : subjStore)
       : (scorerStore === '*' ? '' : scorerStore);
-    const m = await onAddPerson(name, store, adding === 'subject' && mode.reflect && onlyNew);
+    const m = await onAddPerson(name, store, (adding === 'subject' && mode.reflect) ? 'newgrads' : 'members');
     if (adding === 'subject') { setStaffId(m.id); if (m.store) setSubjStore(m.store); }
     else { setScorer(m.name); if (m.store) setScorerStore(m.store); }
     setAdding(null); setAddName('');
@@ -767,14 +799,7 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>シャンプーをする人</span>
             <span style={{ display:'block', fontSize:'11px', color:C.mute, fontWeight:500, margin:'2px 0 5px' }}>
-              チェックを受ける側
-              {mode.reflect && (
-                <button onClick={e => { e.preventDefault(); setOnlyNew(v => !v); setStaffId(''); }}
-                  style={{ marginLeft:'8px', background:'none', border:'none', padding:0, cursor:'pointer',
-                    color: onlyNew ? C.ok : C.mute, fontWeight:700, fontSize:'11px', textDecoration:'underline' }}>
-                  {onlyNew ? '新卒のみ' : '全員から選ぶ'}
-                </button>
-              )}
+              チェックを受ける側{mode.reflect ? '（新卒リストから選びます）' : ''}
             </span>
             <div style={{ display:'flex', gap:'6px' }}>
               <select value={subjStore} onChange={e => { setSubjStore(e.target.value); setStaffId(''); }}
@@ -793,12 +818,12 @@ function FormView({ people, mode, base, onCancel, onSave, onAddPerson, saving })
                 <Plus size={15} />
               </button>
             </div>
-            {mode.reflect && onlyNew && subjPool.length === 0 && (
+            {mode.reflect && subjPool.length === 0 && (
               <div style={{ marginTop:'6px', fontSize:'11px', color:C.ng, lineHeight:1.7 }}>
-                新卒がまだ登録されていません。人員登録で「新卒」を押すか、右の＋でここから追加してください。
+                今年の新卒がまだ登録されていません。人員登録の「新卒」に追加するか、右の＋でここから追加してください。
               </div>
             )}
-            {adding === 'subject' && <AddPersonBox store={subjStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} newgrad={mode.reflect && onlyNew} />}
+            {adding === 'subject' && <AddPersonBox store={subjStore} name={addName} setName={setAddName} msg={addMsg} onAdd={doAdd} onCancel={() => setAdding(null)} newgrad={mode.reflect} />}
           </label>
           <label style={lblStyle}>
             <span style={{ fontSize:'13px', fontWeight:700, color:C.text }}>点数をつける人</span>
@@ -1118,252 +1143,6 @@ function PasswordGate({ title, note, expected, master, onOk, onCancel }) {
   );
 }
 
-// ─── 人員登録 ───────────────────────────────────────────────────
-function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords, onImport }) {
-  const [draft, setDraft]       = useState(() => JSON.parse(JSON.stringify(people || { stores:[], members:[] })));
-  const [newName, setNewName]   = useState('');
-  const [newNameStore, setNewNameStore] = useState('');
-  const [newIsGrad, setNewIsGrad] = useState(false);
-  const [newStore, setNewStore] = useState('');
-  const [drag, setDrag]         = useState(null);
-  const [over, setOver]         = useState(null);
-  const [pwOpen, setPwOpen]     = useState(false);
-  const [pw1, setPw1]           = useState(scorePw || '');
-  const [pw2, setPw2]           = useState(peoplePw || '');
-  const [pwMsg, setPwMsg]       = useState('');
-  const [impMsg, setImpMsg]     = useState('');
-  const dirty = JSON.stringify(draft) !== JSON.stringify(people);
-
-  const stores  = draft.stores || [];
-  const members = draft.members || [];
-  const used = {};
-  (results || []).forEach(r => { used[r.staffId] = (used[r.staffId] || 0) + 1; });
-
-  function setMember(id, patch) {
-    setDraft(d => ({ ...d, members: d.members.map(m => m.id === id ? { ...m, ...patch } : m) }));
-  }
-  function delMember(m) {
-    const n = used[m.id] || 0;
-    if (!confirm(n > 0
-      ? `${m.name}さんを一覧から消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
-      : `${m.name}さんを一覧から消します。よろしいですか。`)) return;
-    setDraft(d => ({ ...d, members: d.members.filter(x => x.id !== m.id) }));
-  }
-  function addMember() {
-    const name = newName.trim();
-    if (!name) return;
-    if (members.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
-    setDraft(d => ({ ...d, members: [...d.members, { id: uid(), name, store: newNameStore, newgrad: newIsGrad }] }));
-    setNewName('');
-  }
-  // ドラッグで並べ替え（落とした行の手前に入る）
-  function dropOn(targetId) {
-    if (!drag || drag === targetId) return;
-    setDraft(d => {
-      const arr = [...d.members];
-      const from = arr.findIndex(m => m.id === drag);
-      if (from < 0) return d;
-      const [moved] = arr.splice(from, 1);
-      const to = arr.findIndex(m => m.id === targetId);
-      arr.splice(to < 0 ? arr.length : to, 0, moved);
-      return { ...d, members: arr };
-    });
-  }
-  function dropAtEnd() {
-    if (!drag) return;
-    setDraft(d => {
-      const arr = [...d.members];
-      const from = arr.findIndex(m => m.id === drag);
-      if (from < 0) return d;
-      const [moved] = arr.splice(from, 1);
-      arr.push(moved);
-      return { ...d, members: arr };
-    });
-  }
-  function endDrag() { setDrag(null); setOver(null); }
-
-  function delStore(name) {
-    const n = members.filter(m => m.store === name).length;
-    if (n > 0) { alert(`${name}の人が${n}名います。先に別の店舗へ変えてください。`); return; }
-    if (!confirm(`店舗「${name}」を消します。よろしいですか。`)) return;
-    setDraft(d => ({ ...d, stores: d.stores.filter(x => x !== name) }));
-  }
-  function addStore() {
-    const name = newStore.trim();
-    if (!name) return;
-    if (stores.includes(name)) { alert('同じ店舗がすでにあります'); return; }
-    setDraft(d => ({ ...d, stores: [...d.stores, name] }));
-    setNewStore('');
-  }
-
-  const grip = { display:'flex', alignItems:'center', justifyContent:'center', width:'22px', flexShrink:0, color:'#C2BBA9', cursor:'grab' };
-
-  return (
-    <>
-      <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
-        ここに登録した人は、シャンプーをする側としても点数をつける側としても選べます。
-        左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんで上下にドラッグすると並べ替えでき、この順番がそのまま採点画面のプルダウンの順になります。
-        カリキュラムやシフトは書き換えません。
-      </div>
-
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
-        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
-          スタッフ<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>
-            {members.length}名／新卒 {members.filter(m => m.newgrad).length}名
-          </span>
-        </div>
-        <div style={{ padding:'7px 14px', fontSize:'11px', color:C.mute, borderTop:'1px solid #F2EEE5', lineHeight:1.7 }}>
-          「新卒」を押した人だけが新卒カリキュラムチェックの受ける側に出ます。来年入社したら登録して、ここを押してください。
-        </div>
-        {members.map(m => {
-          const rowOver = over === m.id;
-          const dragging = drag === m.id;
-          return (
-            <div key={m.id}
-              draggable={dragging}
-              onDragOver={e => { e.preventDefault(); setOver(m.id); }}
-              onDragLeave={() => setOver(o => o === m.id ? null : o)}
-              onDrop={e => { e.preventDefault(); dropOn(m.id); endDrag(); }}
-              onDragEnd={endDrag}
-              style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px',
-                borderTop: rowOver ? `2px solid ${C.ok}` : '1px solid #F7F4EE',
-                background: dragging ? '#F3EFE6' : 'transparent', opacity: dragging ? 0.5 : 1 }}>
-              <span style={grip}
-                onMouseDown={() => setDrag(m.id)} onMouseUp={() => setDrag(null)}
-                onDragStart={() => setDrag(m.id)}>
-                <GripVertical size={15} />
-              </span>
-              <input value={m.name} onChange={e => setMember(m.id, { name: e.target.value })}
-                style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-              <select value={m.store || ''} onChange={e => setMember(m.id, { store: e.target.value })}
-                style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
-                <option value="">店舗なし</option>
-                {stores.map(x => <option key={x} value={x}>{x}</option>)}
-              </select>
-              <button onClick={() => setMember(m.id, { newgrad: !m.newgrad })}
-                title="新卒カリキュラムチェックの対象にする"
-                style={{ flexShrink:0, padding:'7px 10px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
-                  border: m.newgrad ? 'none' : `1px solid ${C.line}`,
-                  background: m.newgrad ? C.ok : '#FFF', color: m.newgrad ? '#FFF' : '#C2BBA9' }}>
-                新卒
-              </button>
-              <button onClick={() => delMember(m)} title="削除"
-                style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                <Trash2 size={13} />
-              </button>
-            </div>
-          );
-        })}
-        <div
-          onDragOver={e => { e.preventDefault(); setOver('__end__'); }}
-          onDragLeave={() => setOver(o => o === '__end__' ? null : o)}
-          onDrop={e => { e.preventDefault(); dropAtEnd(); endDrag(); }}
-          style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 12px',
-            borderTop: over === '__end__' ? `2px solid ${C.ok}` : `1px solid ${C.line}`,
-            background: over === '__end__' ? C.okBg : '#FBF9F5' }}>
-          <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addMember()}
-            placeholder="名前"
-            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <select value={newNameStore} onChange={e => setNewNameStore(e.target.value)} style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
-            <option value="">店舗なし</option>
-            {stores.map(x => <option key={x} value={x}>{x}</option>)}
-          </select>
-          <button onClick={() => setNewIsGrad(v => !v)}
-            style={{ flexShrink:0, padding:'7px 10px', borderRadius:'8px', fontSize:'11px', fontWeight:700, cursor:'pointer',
-              border: newIsGrad ? 'none' : `1px solid ${C.line}`,
-              background: newIsGrad ? C.ok : '#FFF', color: newIsGrad ? '#FFF' : '#C2BBA9' }}>
-            新卒
-          </button>
-          <button onClick={addMember}
-            style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            <Plus size={13} /> 追加
-          </button>
-        </div>
-      </div>
-
-      <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
-        <button onClick={async () => { const r = await onImport(); setImpMsg(r.added > 0 ? `${r.added}名を取り込みました：${r.names.join('、')}` : 'カリキュラムに未登録の人はいませんでした'); }}
-          style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-          <Plus size={13} /> カリキュラムから未登録の人を取り込む
-        </button>
-        {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
-      </div>
-
-      {/* 店舗 */}
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'12px' }}>
-        <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'8px' }}>
-          店舗<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>一覧の絞り込みに使います</span>
-        </div>
-        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
-          {stores.map(x => (
-            <span key={x} style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'5px 8px 5px 11px', borderRadius:'999px', background:C.soft, fontSize:'12px', color:C.text }}>
-              {x}
-              <span style={{ fontSize:'10px', color:C.mute }}>{members.filter(m => m.store === x).length}</span>
-              <button onClick={() => delStore(x)} style={{ background:'none', border:'none', cursor:'pointer', color:C.mute, padding:0, display:'flex' }}><X size={12} /></button>
-            </span>
-          ))}
-          {stores.length === 0 && <span style={{ fontSize:'12px', color:C.mute }}>店舗がありません</span>}
-        </div>
-        <div style={{ display:'flex', gap:'8px' }}>
-          <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
-            placeholder="新しい店舗の名前"
-            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <button onClick={addStore}
-            style={{ flexShrink:0, padding:'8px 14px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            店舗を追加
-          </button>
-        </div>
-      </div>
-
-      {/* パスワード */}
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'16px' }}>
-        <button onClick={() => setPwOpen(v => !v)}
-          style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
-          <Lock size={13} /> パスワードの設定
-          <span style={{ fontSize:'11px', color:C.mute, fontWeight:500 }}>
-            {scorePw ? '採点：設定あり' : '採点：未設定'} ／ {peoplePw ? '人員登録：設定あり' : '人員登録：未設定'}
-          </span>
-        </button>
-        {pwOpen && (
-          <div style={{ marginTop:'12px' }}>
-            <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
-              閲覧（一覧と詳細）はパスワードなしで誰でも見られます。空欄にするとその場所のパスワードを外せます。
-            </div>
-            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>採点するときのパスワード
-              <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
-                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
-            </label>
-            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>人員登録のパスワード
-              <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
-                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
-            </label>
-            <button onClick={async () => { const ok = await onSavePasswords(pw1.trim(), pw2.trim()); setPwMsg(ok ? '保存しました' : ''); }}
-              style={{ padding:'9px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
-              パスワードを保存
-            </button>
-            {pwMsg && <span style={{ fontSize:'12px', color:C.ok, marginLeft:'10px' }}>{pwMsg}</span>}
-          </div>
-        )}
-      </div>
-
-      <div style={{ position:'sticky', bottom:'10px', display:'flex', gap:'8px', alignItems:'center' }}>
-        <button onClick={() => onSave(draft)} disabled={!dirty || saving}
-          style={{ flex:1, padding:'13px 20px', borderRadius:'10px', border:'none',
-            background: dirty ? C.text : '#D8D2C6', color:'#FFF', fontSize:'13px', fontWeight:700,
-            cursor: dirty ? 'pointer' : 'default' }}>
-          {saving ? '保存中…' : dirty ? '変更を保存する' : '保存済み'}
-        </button>
-        {dirty && (
-          <button onClick={() => setDraft(JSON.parse(JSON.stringify(people)))}
-            style={{ padding:'13px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.mute, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
-            元に戻す
-          </button>
-        )}
-      </div>
-    </>
-  );
-}
-
 // ─── 採点画面からその場で人を足す ───────────────────────────────
 function AddPersonBox({ store, name, setName, msg, onAdd, onCancel, newgrad }) {
   const where = store === '*' ? '店舗なし' : (store === '' ? '店舗なし' : store);
@@ -1585,6 +1364,408 @@ function OverviewView({ people, results, onOpen }) {
       <div style={{ fontSize:'11px', color:C.mute, marginTop:'10px', lineHeight:1.7 }}>
         全員が受けるわけではないので、ここには受けた人だけが出ます。行を押すとその回の詳細（60項目の点数）が開きます。
       </div>
+    </>
+  );
+}
+
+// ─── 人員登録 ───────────────────────────────────────────────────
+function MemberList({ title, note, list, listKey, stores, used, draft, setDraft, newStoreDefault }) {
+  const [newName, setNewName] = useState('');
+  const [newStore, setNewStore] = useState(newStoreDefault || '');
+  const [drag, setDrag] = useState(null);
+  const [over, setOver] = useState(null);
+
+  const setM = (id, patch) => setDraft(d => ({ ...d, [listKey]: d[listKey].map(m => m.id === id ? { ...m, ...patch } : m) }));
+  const del = m => {
+    const n = used[m.id] || 0;
+    if (!confirm(n > 0
+      ? `${m.name}さんを消します。採点履歴${n}件はそのまま残ります。よろしいですか。`
+      : `${m.name}さんを消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, [listKey]: d[listKey].filter(x => x.id !== m.id) }));
+  };
+  const add = () => {
+    const name = newName.trim();
+    if (!name) return;
+    if (list.some(m => m.name === name)) { alert('同じ名前がすでに登録されています'); return; }
+    setDraft(d => ({ ...d, [listKey]: [...d[listKey], { id: uid(), name, store: newStore }] }));
+    setNewName('');
+  };
+  const dropOn = targetId => {
+    if (!drag || drag === targetId) return;
+    setDraft(d => {
+      const arr = [...d[listKey]];
+      const from = arr.findIndex(m => m.id === drag);
+      if (from < 0) return d;
+      const [moved] = arr.splice(from, 1);
+      const to = arr.findIndex(m => m.id === targetId);
+      arr.splice(to < 0 ? arr.length : to, 0, moved);
+      return { ...d, [listKey]: arr };
+    });
+  };
+  const dropEnd = () => {
+    if (!drag) return;
+    setDraft(d => {
+      const arr = [...d[listKey]];
+      const from = arr.findIndex(m => m.id === drag);
+      if (from < 0) return d;
+      const [moved] = arr.splice(from, 1);
+      arr.push(moved);
+      return { ...d, [listKey]: arr };
+    });
+  };
+  const endDrag = () => { setDrag(null); setOver(null); };
+  const grip = { display:'flex', alignItems:'center', justifyContent:'center', width:'22px', flexShrink:0, color:'#C2BBA9', cursor:'grab' };
+
+  return (
+    <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', marginBottom:'12px', overflow:'hidden' }}>
+      <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700, color:C.text }}>
+        {title}<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{list.length}名</span>
+      </div>
+      {note && <div style={{ padding:'7px 14px', fontSize:'11px', color:C.mute, borderTop:'1px solid #F2EEE5', lineHeight:1.7 }}>{note}</div>}
+      {list.map(m => {
+        const rowOver = over === m.id, dragging = drag === m.id;
+        return (
+          <div key={m.id}
+            draggable={dragging}
+            onDragOver={e => { e.preventDefault(); setOver(m.id); }}
+            onDragLeave={() => setOver(o => o === m.id ? null : o)}
+            onDrop={e => { e.preventDefault(); dropOn(m.id); endDrag(); }}
+            onDragEnd={endDrag}
+            style={{ display:'flex', alignItems:'center', gap:'8px', padding:'7px 12px',
+              borderTop: rowOver ? `2px solid ${C.ok}` : '1px solid #F7F4EE',
+              background: dragging ? '#F3EFE6' : 'transparent', opacity: dragging ? 0.5 : 1 }}>
+            <span style={grip} onMouseDown={() => setDrag(m.id)} onMouseUp={() => setDrag(null)} onDragStart={() => setDrag(m.id)}>
+              <GripVertical size={15} />
+            </span>
+            <input value={m.name} onChange={e => setM(m.id, { name: e.target.value })}
+              style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+            <select value={m.store || ''} onChange={e => setM(m.id, { store: e.target.value })}
+              style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
+              <option value="">店舗なし</option>
+              {stores.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+            <button onClick={() => del(m)} title="削除"
+              style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        );
+      })}
+      <div
+        onDragOver={e => { e.preventDefault(); setOver('__end__'); }}
+        onDragLeave={() => setOver(o => o === '__end__' ? null : o)}
+        onDrop={e => { e.preventDefault(); dropEnd(); endDrag(); }}
+        style={{ display:'flex', alignItems:'center', gap:'8px', padding:'11px 12px',
+          borderTop: over === '__end__' ? `2px solid ${C.ok}` : `1px solid ${C.line}`,
+          background: over === '__end__' ? C.okBg : '#FBF9F5' }}>
+        <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="名前"
+          style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+        <select value={newStore} onChange={e => setNewStore(e.target.value)} style={{ ...selStyle, flex:'0 0 124px', padding:'8px 6px' }}>
+          <option value="">店舗なし</option>
+          {stores.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <button onClick={add}
+          style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+          <Plus size={13} /> 追加
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PeopleView({ people, results, onSave, saving, scorePw, peoplePw, onSavePasswords, onImport }) {
+  const [draft, setDraft]   = useState(() => JSON.parse(JSON.stringify({ stores:[], members:[], newgrads:[], ...(people || {}) })));
+  const [newStore, setNewStore] = useState('');
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw1, setPw1] = useState(scorePw || '');
+  const [pw2, setPw2] = useState(peoplePw || '');
+  const [pwMsg, setPwMsg] = useState('');
+  const [impMsg, setImpMsg] = useState('');
+  const dirty = JSON.stringify(draft) !== JSON.stringify(people);
+
+  const stores = draft.stores || [];
+  const used = {};
+  (results || []).forEach(r => { used[r.staffId] = (used[r.staffId] || 0) + 1; });
+
+  function delStore(name) {
+    const n = [...(draft.members||[]), ...(draft.newgrads||[])].filter(m => m.store === name).length;
+    if (n > 0) { alert(`${name}の人が${n}名います。先に別の店舗へ変えてください。`); return; }
+    if (!confirm(`店舗「${name}」を消します。よろしいですか。`)) return;
+    setDraft(d => ({ ...d, stores: d.stores.filter(x => x !== name) }));
+  }
+  function addStore() {
+    const name = newStore.trim();
+    if (!name) return;
+    if (stores.includes(name)) { alert('同じ店舗がすでにあります'); return; }
+    setDraft(d => ({ ...d, stores: [...d.stores, name] }));
+    setNewStore('');
+  }
+
+  return (
+    <>
+      <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'14px' }}>
+        左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんで上下にドラッグすると並べ替えでき、この順番がそのまま採点画面のプルダウンの順になります。
+        カリキュラムやシフトは書き換えません。
+      </div>
+
+      <MemberList
+        title="今年の新卒"
+        note="新卒カリキュラムチェック（4〜6月）で受ける人です。毎年、入社後にここへ登録して、前年の人は消すか共通リストへ移してください。"
+        list={draft.newgrads || []} listKey="newgrads" stores={stores} used={used} draft={draft} setDraft={setDraft} />
+
+      <MemberList
+        title="スタッフ"
+        note="技術レベルチェック（11〜12月）で受ける人と、両方のチェックで点数をつける人です。"
+        list={draft.members || []} listKey="members" stores={stores} used={used} draft={draft} setDraft={setDraft} />
+
+      <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
+        <button onClick={async () => { const r = await onImport(); setImpMsg(r.added > 0 ? `${r.added}名をスタッフに取り込みました：${r.names.join('、')}` : 'カリキュラムに未登録の人はいませんでした'); }}
+          style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+          <Plus size={13} /> カリキュラムから未登録の人をスタッフに取り込む
+        </button>
+        {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
+      </div>
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'12px' }}>
+        <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'8px' }}>
+          店舗<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>一覧の絞り込みに使います</span>
+        </div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'10px' }}>
+          {stores.map(x => (
+            <span key={x} style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'5px 8px 5px 11px', borderRadius:'999px', background:C.soft, fontSize:'12px', color:C.text }}>
+              {x}
+              <span style={{ fontSize:'10px', color:C.mute }}>{[...(draft.members||[]), ...(draft.newgrads||[])].filter(m => m.store === x).length}</span>
+              <button onClick={() => delStore(x)} style={{ background:'none', border:'none', cursor:'pointer', color:C.mute, padding:0, display:'flex' }}><X size={12} /></button>
+            </span>
+          ))}
+          {stores.length === 0 && <span style={{ fontSize:'12px', color:C.mute }}>店舗がありません</span>}
+        </div>
+        <div style={{ display:'flex', gap:'8px' }}>
+          <input value={newStore} onChange={e => setNewStore(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStore()}
+            placeholder="新しい店舗の名前"
+            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <button onClick={addStore}
+            style={{ flexShrink:0, padding:'8px 14px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            店舗を追加
+          </button>
+        </div>
+      </div>
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'12px 14px', marginBottom:'16px' }}>
+        <button onClick={() => setPwOpen(v => !v)}
+          style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', padding:0, cursor:'pointer', fontSize:'12px', fontWeight:700, color:C.text }}>
+          <Lock size={13} /> パスワードの設定
+          <span style={{ fontSize:'11px', color:C.mute, fontWeight:500 }}>
+            {scorePw ? '採点：設定あり' : '採点：未設定'} ／ {peoplePw ? '人員登録とデータ：設定あり' : '人員登録とデータ：未設定'}
+          </span>
+        </button>
+        {pwOpen && (
+          <div style={{ marginTop:'12px' }}>
+            <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
+              閲覧（一覧・詳細・全員の記録）はパスワードなしで誰でも見られます。<br />
+              人員登録のパスワードは「データ」の画面にも使われます。空欄にすると外せます。
+            </div>
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>採点するときのパスワード
+              <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
+                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+            </label>
+            <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>人員登録とデータのパスワード
+              <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
+                style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
+            </label>
+            <button onClick={async () => { const ok = await onSavePasswords(pw1.trim(), pw2.trim()); setPwMsg(ok ? '保存しました' : ''); }}
+              style={{ padding:'9px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+              パスワードを保存
+            </button>
+            {pwMsg && <span style={{ fontSize:'12px', color:C.ok, marginLeft:'10px' }}>{pwMsg}</span>}
+          </div>
+        )}
+      </div>
+
+      <div style={{ position:'sticky', bottom:'10px', display:'flex', gap:'8px', alignItems:'center' }}>
+        <button onClick={() => onSave(draft)} disabled={!dirty || saving}
+          style={{ flex:1, padding:'13px 20px', borderRadius:'10px', border:'none',
+            background: dirty ? C.text : '#D8D2C6', color:'#FFF', fontSize:'13px', fontWeight:700,
+            cursor: dirty ? 'pointer' : 'default' }}>
+          {saving ? '保存中…' : dirty ? '変更を保存する' : '保存済み'}
+        </button>
+        {dirty && (
+          <button onClick={() => setDraft(JSON.parse(JSON.stringify(people)))}
+            style={{ padding:'13px 18px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.mute, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
+            元に戻す
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── データ（パスワードあり）─────────────────────────────────────
+function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
+function median(ns) {
+  if (!ns.length) return null;
+  const v = [...ns].sort((a,b) => a - b);
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : Math.round((v[m-1] + v[m]) / 2);
+}
+
+function StatsView({ people, results }) {
+  const [kindMode, setKindMode] = useState('all');
+  const [store, setStore] = useState('*');
+  const stores = people.stores || [];
+  const all = [...(people.members || []), ...(people.newgrads || [])];
+  const storeOf = id => (all.find(m => m.id === id) || {}).store;
+
+  const scoped = results.filter(r =>
+    (kindMode === 'all' || r.mode === kindMode) &&
+    (store === '*' || (r.store || storeOf(r.staffId) || '') === store));
+
+  // 人ごとにまとめる
+  const byPerson = {};
+  scoped.forEach(r => {
+    const k = r.staffId || r.staffName;
+    (byPerson[k] = byPerson[k] || { name:r.staffName, list:[] }).list.push(r);
+  });
+  const persons = Object.values(byPerson);
+  persons.forEach(p => p.list.sort((a,b) => (a.date||'').localeCompare(b.date||'')));
+
+  // 合格までにかかった日数（初回を受けた日 → はじめて合格した日）
+  const passed = [], notYet = [];
+  persons.forEach(p => {
+    const first = p.list[0];
+    const hit = p.list.find(r => r.pass);
+    if (hit) passed.push({ name:p.name, first:first.date, at:hit.date, tries:p.list.indexOf(hit) + 1,
+      days: daysBetween(first.date, hit.date), total:hit.total });
+    else notYet.push({ name:p.name, tries:p.list.length, best: Math.max(...p.list.map(r => r.total || 0)) });
+  });
+  passed.sort((a,b) => a.days - b.days);
+
+  const dayList  = passed.map(x => x.days);
+  const tryList  = passed.map(x => x.tries);
+  const avgDays  = dayList.length ? Math.round(dayList.reduce((a,b) => a+b, 0) / dayList.length) : null;
+  const avgTries = tryList.length ? (tryList.reduce((a,b) => a+b, 0) / tryList.length).toFixed(1) : null;
+  const avgScore = scoped.length ? Math.round(scoped.reduce((n,r) => n + (r.total||0), 0) / scoped.length) : null;
+  const rate = scoped.length ? Math.round(scoped.filter(r => r.pass).length / scoped.length * 100) : null;
+
+  // セクション別・項目別の平均
+  const secAvg = SECTIONS.map(sec => {
+    const vals = scoped.map(r => sectionTotal(r.scores || {}, sec.key));
+    const avg = vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : 0;
+    return { name:sec.name, avg, max:SECTION_MAX[sec.key], pct: vals.length ? avg / SECTION_MAX[sec.key] * 100 : 0 };
+  });
+  const itemAvg = ALL_ITEMS.map(it => {
+    const vals = scoped.map(r => (r.scores || {})[it.id]).filter(v => typeof v === 'number');
+    return { ...it, avg: vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : null, n: vals.length };
+  }).filter(x => x.avg !== null).sort((a,b) => a.avg - b.avg);
+
+  const card = { background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'12px' };
+
+  return (
+    <>
+      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
+        <select value={kindMode} onChange={e => setKindMode(e.target.value)} style={selStyle}>
+          <option value="all">両方のチェック</option>
+          {Object.values(MODES).map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <select value={store} onChange={e => setStore(e.target.value)} style={selStyle}>
+          <option value="*">すべての店舗</option>
+          {stores.map(x => <option key={x} value={x}>{x}</option>)}
+          <option value="">店舗なし</option>
+        </select>
+      </div>
+
+      {scoped.length === 0 ? (
+        <div style={{ ...card, textAlign:'center', color:C.mute, padding:'40px' }}>まだデータがありません</div>
+      ) : (
+      <>
+        <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
+          {[
+            { label:'合格までの平均日数', value: avgDays === null ? '―' : `${avgDays}日` },
+            { label:'中央値', value: median(dayList) === null ? '―' : `${median(dayList)}日` },
+            { label:'合格までの平均回数', value: avgTries === null ? '―' : `${avgTries}回` },
+            { label:'平均点', value: avgScore === null ? '―' : `${avgScore}点` },
+            { label:'合格率', value: rate === null ? '―' : `${rate}%` },
+          ].map(x => (
+            <div key={x.label} style={{ flex:'1 1 110px', padding:'11px 12px', borderRadius:'11px', background:C.card, border:`1px solid ${C.line}` }}>
+              <div style={{ fontSize:'10px', color:C.mute, fontWeight:600, lineHeight:1.5 }}>{x.label}</div>
+              <div style={{ fontSize:'17px', fontWeight:700, color:C.text, marginTop:'3px' }}>{x.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'4px' }}>合格までにかかった日数</div>
+          <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            はじめて受けた日から、はじめて合格した日までの日数です。1回目で合格した人は0日になります。
+          </div>
+          {passed.length === 0 ? <div style={{ fontSize:'12px', color:C.mute }}>まだ合格者がいません</div> : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead><tr style={{ background:C.soft }}>
+                  {['名前','はじめて受けた日','合格した日','回数','日数','点数'].map((h,i) => (
+                    <th key={h} style={{ padding:'7px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign: i >= 3 ? 'right' : 'left', whiteSpace:'nowrap' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {passed.map(x => (
+                    <tr key={x.name} style={{ borderTop:'1px solid #F2EEE5' }}>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', fontWeight:600, whiteSpace:'nowrap' }}>{x.name}</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{fmtDate(x.first)}</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}>{fmtDate(x.at)}</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right' }}>{x.tries}回</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', fontWeight:700 }}>{x.days}日</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color:C.ok, fontWeight:700 }}>{x.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {notYet.length > 0 && (
+            <div style={{ marginTop:'12px', paddingTop:'10px', borderTop:`1px solid ${C.line}`, fontSize:'11px', color:C.mute, lineHeight:1.8 }}>
+              まだ合格していない人 {notYet.length}名：
+              {notYet.map(x => `${x.name}（${x.tries}回・最高${x.best}点）`).join('、')}
+            </div>
+          )}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>セクション別の平均</div>
+          {secAvg.map(x => (
+            <div key={x.name} style={{ marginBottom:'9px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', marginBottom:'3px' }}>
+                <span>{x.name}</span>
+                <span style={{ color:C.mute }}>{x.avg.toFixed(1)} / {x.max}（{Math.round(x.pct)}%）</span>
+              </div>
+              <div style={{ height:'6px', background:C.soft, borderRadius:'99px', overflow:'hidden' }}>
+                <div style={{ width:`${x.pct}%`, height:'100%', background: x.pct >= 92 ? C.ok : x.pct >= 80 ? '#C9A227' : C.ng }} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'4px' }}>平均が低い項目 15</div>
+          <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            全員の平均点が低い順です。ここが練習会で優先して詰めるところになります。
+          </div>
+          {itemAvg.slice(0, 15).map((x, i) => (
+            <div key={x.id} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'5px 0', borderTop: i === 0 ? 'none' : '1px solid #F7F4EE' }}>
+              <span style={{ fontSize:'10px', color:C.mute, width:'18px', flexShrink:0 }}>{i+1}</span>
+              <span style={{ flex:1, minWidth:0, fontSize:'12px', lineHeight:1.45 }}>
+                {x.s && <Star size={10} fill={C.star} color={C.star} style={{ verticalAlign:'-1px', marginRight:'4px' }} />}
+                {x.t}
+                <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>{x.section}</span>
+              </span>
+              <span style={{ fontSize:'13px', fontWeight:700, flexShrink:0, color: x.avg >= 2.7 ? C.ok : x.avg >= 2.2 ? '#C9A227' : C.ng }}>
+                {x.avg.toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </>
+      )}
     </>
   );
 }

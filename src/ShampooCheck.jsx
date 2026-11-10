@@ -1756,7 +1756,7 @@ function StatsView({ people, results }) {
               <span style={{ flex:1, minWidth:0, fontSize:'12px', lineHeight:1.45 }}>
                 {x.s && <Star size={10} fill={C.star} color={C.star} style={{ verticalAlign:'-1px', marginRight:'4px' }} />}
                 {x.t}
-                <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>{x.section}</span>
+                <span style={{ fontSize:'10px', color:C.mute, marginLeft:'8px', background:C.soft, borderRadius:'5px', padding:'1px 6px', whiteSpace:'nowrap' }}>{x.section}</span>
               </span>
               <span style={{ fontSize:'13px', fontWeight:700, flexShrink:0, color: x.avg >= 2.7 ? C.ok : x.avg >= 2.2 ? '#C9A227' : C.ng }}>
                 {x.avg.toFixed(2)}

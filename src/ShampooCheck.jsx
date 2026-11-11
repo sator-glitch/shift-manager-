@@ -1687,8 +1687,11 @@ function StatsView({ people, results }) {
     const first = p.list[0];
     const hit = p.list.find(r => r.pass);
     if (hit) passed.push({ name:p.name, first:first.date, at:hit.date, tries:p.list.indexOf(hit) + 1,
-      days: daysBetween(first.date, hit.date), total:hit.total });
-    else notYet.push({ name:p.name, tries:p.list.length, best: Math.max(...p.list.map(r => r.total || 0)) });
+      days: daysBetween(first.date, hit.date), total:hit.total, kind:hit.kind, scorer:hit.scorer });
+    else {
+      const best = p.list.reduce((m,x) => (x.total||0) > (m.total||0) ? x : m, p.list[0]);
+      notYet.push({ name:p.name, tries:p.list.length, best:best.total, kind:best.kind, scorer:best.scorer, at:best.date });
+    }
   });
   passed.sort((a,b) => a.days - b.days);
 
@@ -1698,6 +1701,19 @@ function StatsView({ people, results }) {
   const avgTries = tryList.length ? (tryList.reduce((a,b) => a+b, 0) / tryList.length).toFixed(1) : null;
   const avgScore = scoped.length ? Math.round(scoped.reduce((n,r) => n + (r.total||0), 0) / scoped.length) : null;
   const rate = scoped.length ? Math.round(scoped.filter(r => r.pass).length / scoped.length * 100) : null;
+
+  // 採点者ごと（合格・不合格の両方を含む）
+  const scorerMap = {};
+  scoped.forEach(r => {
+    const k = r.scorer || '―';
+    const x = scorerMap[k] = scorerMap[k] || { name:k, n:0, pass:0, fail:0, short:0, long:0, sum:0 };
+    x.n++; x.sum += (r.total || 0);
+    if (r.pass) x.pass++; else x.fail++;
+    if (r.kind === 'short') x.short++; else if (r.kind === 'long') x.long++;
+  });
+  const byScorer = Object.values(scorerMap)
+    .map(x => ({ ...x, avg: Math.round(x.sum / x.n) }))
+    .sort((a,b) => b.n - a.n || b.avg - a.avg);
 
   // セクション別・項目別の平均
   const secAvg = SECTIONS.map(sec => {
@@ -1754,8 +1770,8 @@ function StatsView({ people, results }) {
             <div style={{ overflowX:'auto' }}>
               <table style={{ width:'100%', borderCollapse:'collapse' }}>
                 <thead><tr style={{ background:C.soft }}>
-                  {['名前','はじめて受けた日','合格した日','回数','日数','点数'].map((h,i) => (
-                    <th key={h} style={{ padding:'7px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign: i >= 3 ? 'right' : 'left', whiteSpace:'nowrap' }}>{h}</th>
+                  {['名前','はじめて受けた日','合格した日','種類','採点者','回数','日数','点数'].map((h,i) => (
+                    <th key={h} style={{ padding:'7px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign: i >= 5 ? 'right' : 'left', whiteSpace:'nowrap' }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
@@ -1764,6 +1780,8 @@ function StatsView({ people, results }) {
                       <td style={{ padding:'7px 10px', fontSize:'12px', fontWeight:600, whiteSpace:'nowrap' }}>{x.name}</td>
                       <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{fmtDate(x.first)}</td>
                       <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}>{fmtDate(x.at)}</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{kindLabel(x.kind)}</td>
+                      <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}>{x.scorer || '―'}</td>
                       <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right' }}>{x.tries}回</td>
                       <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', fontWeight:700 }}>{x.days}日</td>
                       <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color:C.ok, fontWeight:700 }}>{x.total}</td>
@@ -1776,9 +1794,68 @@ function StatsView({ people, results }) {
           {notYet.length > 0 && (
             <div style={{ marginTop:'12px', paddingTop:'10px', borderTop:`1px solid ${C.line}`, fontSize:'11px', color:C.mute, lineHeight:1.8 }}>
               まだ合格していない人 {notYet.length}名：
-              {notYet.map(x => `${x.name}（${x.tries}回・最高${x.best}点）`).join('、')}
+              {notYet.map(x => `${x.name}（${x.tries}回・最高${x.best}点 ${kindLabel(x.kind)}・採点 ${x.scorer || '―'}）`).join('、')}
             </div>
           )}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'4px' }}>点数をつけた人ごと</div>
+          <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            合格・不合格どちらも含めた、採点した人ごとの回数と平均点です。
+          </div>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead><tr style={{ background:C.soft }}>
+                {['採点者','回数','ショート','ロング','合格','不合格','平均点'].map((h,i) => (
+                  <th key={h} style={{ padding:'7px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign: i === 0 ? 'left' : 'right', whiteSpace:'nowrap' }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {byScorer.map(x => (
+                  <tr key={x.name} style={{ borderTop:'1px solid #F2EEE5' }}>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', fontWeight:600, whiteSpace:'nowrap' }}>{x.name}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right' }}>{x.n}回</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color:C.mute }}>{x.short}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color:C.mute }}>{x.long}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color:C.ok, fontWeight:700 }}>{x.pass}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', color: x.fail ? C.ng : C.mute, fontWeight: x.fail ? 700 : 500 }}>{x.fail}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', fontWeight:700 }}>{x.avg}点</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'4px' }}>すべての記録</div>
+          <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            合格・不合格にかかわらず、1件ずつ残っているものすべてです。
+          </div>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead><tr style={{ background:C.soft }}>
+                {['日付','名前','店舗','チェック','種類','点数','合否','採点者'].map((h,i) => (
+                  <th key={h} style={{ padding:'7px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign: i === 5 ? 'right' : 'left', whiteSpace:'nowrap' }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {[...scoped].sort((a,b) => (b.date||'').localeCompare(a.date||'')).map(r => (
+                  <tr key={r.id} style={{ borderTop:'1px solid #F2EEE5' }}>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}>{fmtDate(r.date)}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', fontWeight:600, whiteSpace:'nowrap' }}>{r.staffName}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{r.store || '―'}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{MODES[r.mode]?.label.replace('チェック','') || '―'}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', color:C.mute, whiteSpace:'nowrap' }}>{kindLabel(r.kind)}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', textAlign:'right', fontWeight:700, color: r.pass ? C.ok : C.text }}>{r.total}</td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}><Badge pass={r.pass} /></td>
+                    <td style={{ padding:'7px 10px', fontSize:'12px', whiteSpace:'nowrap' }}>{r.scorer || '―'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div style={card}>

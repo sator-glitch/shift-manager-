@@ -99,6 +99,24 @@ function StatusButton({ label, active, title, onClick }) {
   );
 }
 
+// 当日欠席・遅刻のトグル
+function AttButton({ label, active, onClick, title, tone, disabled }) {
+  return (
+    <button onClick={disabled ? undefined : onClick} title={title} disabled={disabled}
+      style={{ fontSize: '10.5px', fontWeight: 700, padding: '4px 10px',
+        borderRadius: '999px', cursor: disabled ? 'not-allowed' : 'pointer',
+        border: active ? '1px solid ' + tone : '1px solid #E2DCCC',
+        background: active ? tone : '#FFFFFF',
+        color: active ? '#FFFFFF' : (disabled ? '#D6D0C4' : '#8A8378') }}>{label}</button>
+  );
+}
+
+function LateBadge() {
+  return (
+    <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: '#FBF0DF', color: '#A9742A' }}>遅刻</span>
+  );
+}
+
 // 判定は配列で持つが、古い形（1人1件のオブジェクト）が残っていても落ちないようにする。
 // id が無い古いデータには、その場で仮のキーを与える。
 export function asEntryList(v) {
@@ -107,7 +125,7 @@ export function asEntryList(v) {
   return [];
 }
 
-export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nameById, onSet, onAdd, onRemove }) {
+export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nameById, onSet, onAdd, onRemove, onAttendance }) {
   const [openFor, setOpenFor] = useState({});
   const label = (id, type) => (typeof nameById === 'function' ? (nameById(id, type) || '（名前なし）') : id);
 
@@ -120,6 +138,9 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
   if (pairs.length === 0) {
     return <div>{title}<div style={{ fontSize: '12px', color: '#B0A99A' }}>Step 4で担当を割り振ると、ここに判定欄が出ます。</div></div>;
   }
+
+  const attendance = (day && day.attendance) || {};
+  const attOf = aid => attendance[aid] || null;   // null=出席 / 'absent'=当日欠席 / 'late'=遅刻
 
   const curricula = Array.isArray(curriculum && curriculum.curricula) ? curriculum.curricula : [];
   const records = (curriculum && curriculum.records) || {};
@@ -175,16 +196,46 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
           const assistantName = label(assistantId, 'assistant');
           const linked = !!(staffLink && staffLink[assistantId]);
 
+          const att = attOf(assistantId);
+          const attButtons = (
+            <>
+              <AttButton label="当日欠席" active={att === 'absent'} tone="#B0746A"
+                disabled={entries.length > 0}
+                title={entries.length > 0 ? '判定が入っています。先に判定を取り消してください' : '来なかった場合。押せば終わりです'}
+                onClick={() => onAttendance && onAttendance(dateStr, assistantId, att === 'absent' ? null : 'absent')} />
+              <AttButton label="遅刻" active={att === 'late'} tone="#A9742A"
+                title="遅れて来た場合。このあと判定も入れられます"
+                onClick={() => onAttendance && onAttendance(dateStr, assistantId, att === 'late' ? null : 'late')} />
+            </>
+          );
+
+          // 当日欠席は押せば終わり。判定欄は出さない
+          if (att === 'absent') {
+            return (
+              <div key={assistantId} style={{ border: '1px solid #EADDD8', borderRadius: '10px', padding: '10px 12px', background: '#FBF6F4', display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', color: '#8A8378' }}>{trainerName}</span>
+                <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#B0746A' }}>{assistantName}</span>
+                <span style={{ fontSize: '11px', color: '#B0746A', fontWeight: 700 }}>当日欠席</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: '5px' }}>{attButtons}</span>
+              </div>
+            );
+          }
+
           if (entries.length === 0 && !openFor[assistantId]) {
             return (
               <div key={assistantId} style={{ border: '1px solid #EEE9DE', borderRadius: '10px', padding: '10px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '11px', color: '#8A8378' }}>{trainerName}</span>
                 <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
                 <span style={{ fontSize: '13px', fontWeight: 700 }}>{assistantName}</span>
-                <button onClick={() => { setOpenFor(p => ({ ...p, [assistantId]: true })); onAdd(dateStr, assistantId, trainerId, nextItemIdFor(assistantId, [])); }}
-                  style={{ marginLeft: 'auto', fontSize: '11px', fontWeight: 600, padding: '5px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', cursor: 'pointer', color: '#2B2823' }}>
-                  判定を記録する
-                </button>
+                {att === 'late' && <LateBadge />}
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                  {attButtons}
+                  <button onClick={() => { setOpenFor(p => ({ ...p, [assistantId]: true })); onAdd(dateStr, assistantId, trainerId, nextItemIdFor(assistantId, [])); }}
+                    style={{ fontSize: '11px', fontWeight: 600, padding: '5px 12px', borderRadius: '6px', border: '1px solid #E2DCCC', background: '#FAF8F4', cursor: 'pointer', color: '#2B2823' }}>
+                    判定を記録する
+                  </button>
+                </span>
               </div>
             );
           }
@@ -207,13 +258,15 @@ export default function JudgmentPanel({ dateStr, day, curriculum, staffLink, nam
                       <span style={{ fontSize: '11px', color: '#C2BBA9' }}>→</span>
                       <span style={{ fontSize: '13px', fontWeight: 700 }}>{assistantName}</span>
                       {entries.length > 1 && <span style={{ fontSize: '10px', color: '#B0A99A' }}>{idx + 1}件目</span>}
+                      {idx === 0 && att === 'late' && <LateBadge />}
                       {info && (
                         <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
                           background: info.isFinal ? '#F4EAE8' : '#F0F0EA', color: info.isFinal ? '#B0746A' : '#8A8378' }}>
                           {info.isFinal ? '最終 ' + info.num + '/' + info.max : 'カウント ' + info.num + '/' + info.max}
                         </span>
                       )}
-                      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                        {idx === 0 && attButtons}
                         <StatusButton label="ノーカウント" active={j.status === 'nocount'} title="回数に数えない場合"
                           onClick={() => onSet(dateStr, assistantId, j.id, { status: j.status === 'nocount' ? null : 'nocount' })} />
                         <StatusButton label="モデルキャンセル" active={j.status === 'modelcancel'} title="モデルが来なかった場合"

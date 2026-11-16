@@ -3,6 +3,7 @@ import { Plus, Trash2, Calendar, Users, Shuffle, X, ChevronLeft, ChevronRight, D
 import CurriculumApp from './Curriculum.jsx';
 import JudgmentPanel, { countInfoOf, splitCountName, asEntryList } from './JudgmentPanel.jsx';
 import JudgmentStats from './JudgmentStats.jsx';
+import AttendanceStats from './AttendanceStats.jsx';
 import JudgmentBoundary from './JudgmentBoundary.jsx';
 
 const WORKSPACE_LIST_KEY = 'shift_manager_workspaces_v1';
@@ -1288,6 +1289,18 @@ export default function ShiftManager() {
     const target = list.find(e => e.id === entryId);
     updateJudgments(dateStr, assistantId, l => l.filter(e => e.id !== entryId));
     if (target) applyJudgmentToCurriculum(dateStr, assistantId, { ...target, removed: true });
+  }
+
+  // 出欠（当日欠席・遅刻）。印のない人はこれまでどおり出席扱い。
+  function setAttendance(dateStr, assistantId, value) {
+    setPracticeDays(prev => {
+      const d = prev[dateStr];
+      if (!d) return prev;
+      const attendance = { ...(d.attendance || {}) };
+      if (value) attendance[assistantId] = value;
+      else delete attendance[assistantId];
+      return { ...prev, [dateStr]: { ...d, attendance } };
+    });
   }
 
   function setJudgment(dateStr, assistantId, entryId, patch) {
@@ -2692,7 +2705,8 @@ export default function ShiftManager() {
                         <JudgmentBoundary>
                           <JudgmentPanel dateStr={ds} day={day} curriculum={curriculum}
                             staffLink={staffLink} nameById={nameById}
-                            onSet={setJudgment} onAdd={addJudgment} onRemove={removeJudgment} />
+                            onSet={setJudgment} onAdd={addJudgment} onRemove={removeJudgment}
+                            onAttendance={setAttendance} />
                         </JudgmentBoundary>
                       )}
                     </div>
@@ -2803,6 +2817,7 @@ export default function ShiftManager() {
               {hasMasterAccess && (
                 <JudgmentBoundary>
                   <JudgmentStats practiceDays={practiceDays} nameById={nameById} />
+                  <AttendanceStats practiceDays={practiceDays} nameById={nameById} />
                 </JudgmentBoundary>
               )}
             </div>

@@ -43,6 +43,12 @@ export default function AttendanceStats({ practiceDays, nameById }) {
   const totalAbsent   = list.reduce((n, r) => n + r.absent, 0);
   const totalLate     = list.reduce((n, r) => n + r.late, 0);
 
+  // 人員登録から消された人が古い割り振りに残っていることがある
+  const displayName = id => {
+    const n = nameById ? nameById(id, 'assistant') : null;
+    return (!n || n === id || n === '（名前なし）') ? '（登録削除済み）' : n;
+  };
+
   const th = { padding: '7px 10px', fontSize: '11px', fontWeight: 700, color: '#9C9486', textAlign: 'left', whiteSpace: 'nowrap' };
   const thR = { ...th, textAlign: 'right' };
   const td = { padding: '7px 10px', fontSize: '12px', color: '#2B2823', whiteSpace: 'nowrap' };
@@ -97,7 +103,7 @@ export default function AttendanceStats({ practiceDays, nameById }) {
             <tbody>
               {list.map(r => (
                 <tr key={r.id} style={{ borderTop: '1px solid #F2EEE5' }}>
-                  <td style={{ ...td, fontWeight: 600 }}>{nameById ? nameById(r.id, 'assistant') : r.id}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{displayName(r.id)}</td>
                   <td style={{ ...tdR, fontWeight: 700 }}>{r.present}日</td>
                   <td style={{ ...tdR, color: '#9C9486' }}>{r.assigned}日</td>
                   <td style={{ ...tdR, fontWeight: 700, color: r.rate >= 0.9 ? '#2B4A3A' : r.rate >= 0.75 ? '#A9742A' : '#B0746A' }}>

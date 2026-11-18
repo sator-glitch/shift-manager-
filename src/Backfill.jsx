@@ -178,7 +178,8 @@ export default function BackfillApp() {
         <strong style={{ color: INK }}>自分のノートやメモを見ながら書いてください。</strong>
         前後の記録を一緒に出してあるので、その間のページを探せば見つかります。
         まだ受けていない項目は、下のボタンを押してください。
-        {allowUnknown && <><br />どうしても日付が思い出せない項目は<strong style={{ color: INK }}>「わからない」</strong>を押してください。受けたかどうかを後でこちらから確認します。</>}
+        {allowUnknown && <><br /><strong style={{ color: INK }}>受けたのは確かなのに日付が思い出せない項目は「わからない」</strong>を押してください。
+          合格の印（◎）だけが付き、日付は空のままになります。受けたかどうか自体があいまいな場合は「まだ受けていない」を押してください。</>}
       </div>
 
       {/* 未記入だけを先頭に出す */}
@@ -242,7 +243,7 @@ export default function BackfillApp() {
                   まだ受けていない
                 </button>
                 {allowUnknown && (
-                  <button onClick={() => toggleKind(it.id, 'unknown')}
+                  <button onClick={() => toggleKind(it.id, 'unknown')} title="受けたのは確かだが日付が思い出せない場合"
                     style={{ flex: 1, fontSize: '12px', fontWeight: unknown ? 800 : 500,
                       padding: '8px 12px', borderRadius: '8px',
                       border: unknown ? '1px solid #8A6B2F' : '1px solid ' + LINE,
@@ -252,6 +253,11 @@ export default function BackfillApp() {
                   </button>
                 )}
               </div>
+              {allowUnknown && (
+                <div style={{ fontSize: '10.5px', color: '#9C9486', marginTop: '6px', lineHeight: 1.6 }}>
+                  受けていない → 左　／　受けたが日付が不明 → 右（◎が付きます）
+                </div>
+              )}
             </div>
           );
         })}

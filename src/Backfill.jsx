@@ -105,19 +105,22 @@ export default function BackfillApp() {
     });
     setDone(false);
   }
-  function toggleNotYet(id) {
+  function toggleKind(id, kind) {
     setAnswers(prev => {
       const cur = prev[id] || {};
-      return { ...prev, [id]: cur.kind === 'notyet' ? {} : { kind: 'notyet' } };
+      return { ...prev, [id]: cur.kind === kind ? {} : { kind } };
     });
     setDone(false);
   }
+  const toggleNotYet = id => toggleKind(id, 'notyet');
 
   const items = (ask && ask.items) || [];
   const holes = items.filter(it => !it.date);
+  const allowUnknown = !!(ask && ask.allowUnknown);
+  const answeredKinds = ['notyet', 'unknown'];
   const remaining = holes.filter(it => {
     const a = answers[it.id];
-    return !a || (a.kind !== 'notyet' && !a.date);
+    return !a || (answeredKinds.indexOf(a.kind) < 0 && !a.date);
   });
 
   // 未記入の行に、前後で記録がある項目を添える（ノートを探す手がかり）
@@ -175,6 +178,7 @@ export default function BackfillApp() {
         <strong style={{ color: INK }}>自分のノートやメモを見ながら書いてください。</strong>
         前後の記録を一緒に出してあるので、その間のページを探せば見つかります。
         まだ受けていない項目は、下のボタンを押してください。
+        {allowUnknown && <><br />どうしても日付が思い出せない項目は<strong style={{ color: INK }}>「わからない」</strong>を押してください。受けたかどうかを後でこちらから確認します。</>}
       </div>
 
       {/* 未記入だけを先頭に出す */}
@@ -189,7 +193,9 @@ export default function BackfillApp() {
         {holeRows.map(({ it, prev, next }) => {
           const a = answers[it.id] || {};
           const notYet = a.kind === 'notyet';
-          const answered = notYet || !!a.date;
+          const unknown = a.kind === 'unknown';
+          const locked = notYet || unknown;
+          const answered = locked || !!a.date;
           return (
             <div key={it.id} style={{ background: '#FFFFFF', border: '2px solid ' + (answered ? '#BFD3C4' : '#D8C9A8'), borderRadius: '12px', padding: '13px 14px' }}>
               <div style={{ fontSize: '10.5px', color: '#B0A99A', fontWeight: 700 }}>{it.category || ''}</div>
@@ -209,31 +215,43 @@ export default function BackfillApp() {
               )}
 
               <div style={{ display: 'flex', gap: '6px', marginTop: '11px' }}>
-                <select value={a.y || ''} disabled={notYet} onChange={e => setPart(it.id, 'y', e.target.value)}
-                  style={{ ...selStyle, background: notYet ? '#F0EDE6' : BG, color: notYet ? '#C2BBA9' : INK }}>
+                <select value={a.y || ''} disabled={locked} onChange={e => setPart(it.id, 'y', e.target.value)}
+                  style={{ ...selStyle, background: locked ? '#F0EDE6' : BG, color: locked ? '#C2BBA9' : INK }}>
                   <option value="">年</option>
                   {yearOpts().map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
-                <select value={a.m || ''} disabled={notYet} onChange={e => setPart(it.id, 'm', e.target.value)}
-                  style={{ ...selStyle, background: notYet ? '#F0EDE6' : BG, color: notYet ? '#C2BBA9' : INK }}>
+                <select value={a.m || ''} disabled={locked} onChange={e => setPart(it.id, 'm', e.target.value)}
+                  style={{ ...selStyle, background: locked ? '#F0EDE6' : BG, color: locked ? '#C2BBA9' : INK }}>
                   <option value="">月</option>
                   {monthOpts(a.y).map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                <select value={a.d || ''} disabled={notYet || !a.y || !a.m} onChange={e => setPart(it.id, 'd', e.target.value)}
-                  style={{ ...selStyle, background: (notYet || !a.y || !a.m) ? '#F0EDE6' : BG, color: (notYet || !a.y || !a.m) ? '#C2BBA9' : INK }}>
+                <select value={a.d || ''} disabled={locked || !a.y || !a.m} onChange={e => setPart(it.id, 'd', e.target.value)}
+                  style={{ ...selStyle, background: (locked || !a.y || !a.m) ? '#F0EDE6' : BG, color: (locked || !a.y || !a.m) ? '#C2BBA9' : INK }}>
                   <option value="">日</option>
                   {dayOpts(a.y, a.m).map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
 
-              <button onClick={() => toggleNotYet(it.id)}
-                style={{ marginTop: '8px', fontSize: '12px', fontWeight: notYet ? 800 : 500,
-                  padding: '8px 12px', borderRadius: '8px', width: '100%',
-                  border: notYet ? '1px solid ' + INK : '1px solid ' + LINE,
-                  background: notYet ? INK : '#FFFFFF', color: notYet ? '#FAF8F4' : SUB,
-                  cursor: 'pointer', fontFamily: 'inherit' }}>
-                まだ受けていない
-              </button>
+              <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                <button onClick={() => toggleNotYet(it.id)}
+                  style={{ flex: 1, fontSize: '12px', fontWeight: notYet ? 800 : 500,
+                    padding: '8px 12px', borderRadius: '8px',
+                    border: notYet ? '1px solid ' + INK : '1px solid ' + LINE,
+                    background: notYet ? INK : '#FFFFFF', color: notYet ? '#FAF8F4' : SUB,
+                    cursor: 'pointer', fontFamily: 'inherit' }}>
+                  まだ受けていない
+                </button>
+                {allowUnknown && (
+                  <button onClick={() => toggleKind(it.id, 'unknown')}
+                    style={{ flex: 1, fontSize: '12px', fontWeight: unknown ? 800 : 500,
+                      padding: '8px 12px', borderRadius: '8px',
+                      border: unknown ? '1px solid #8A6B2F' : '1px solid ' + LINE,
+                      background: unknown ? '#8A6B2F' : '#FFFFFF', color: unknown ? '#FAF8F4' : SUB,
+                      cursor: 'pointer', fontFamily: 'inherit' }}>
+                    わからない
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

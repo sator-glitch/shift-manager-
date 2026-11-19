@@ -11,6 +11,7 @@ export default defineConfig({
         curriculum: resolve(__dirname, 'curriculum.html'),
         backfill: resolve(__dirname, 'backfill.html'),
         shampoo: resolve(__dirname, 'shampoo.html'),
+        model: resolve(__dirname, 'model.html'),
       },
     },
   },

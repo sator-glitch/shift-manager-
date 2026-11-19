@@ -37,6 +37,7 @@ function poolOf(stores, name) {
   return (s && s.sameAs) ? s.sameAs : name;
 }
 const NO_STORE = '（店舗なし）';
+const DEFAULT_PW = '1111';   // 店舗パスワード・総管理パスワードの初期値
 
 const C = {
   bg:'#F7F4EE', card:'#FFFFFF', line:'#E5DCC8', text:'#1F1C18', mute:'#9C9486',
@@ -82,7 +83,10 @@ export default function ModelApp() {
   useEffect(() => { (async () => {
     try { const r = await window.storage.get(RECORDS_KEY); setRecords(JSON.parse(r.value) || {}); } catch (e) {}
     try { const r = await window.storage.get(SIGNUP_PW_KEY); setSignupPw(r.value || ''); } catch (e) {}
-    try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
+    let mpw = null;
+    try { const r = await window.storage.get(MASTER_PW_KEY); mpw = r.value; } catch (e) {}
+    if (!mpw) { mpw = DEFAULT_PW; try { await window.storage.set(MASTER_PW_KEY, mpw); } catch (e) {} }
+    setMasterPw(mpw);
 
     let mn = null;
     try { const r = await window.storage.get(MENUS_KEY); mn = JSON.parse(r.value); } catch (e) {}
@@ -100,10 +104,12 @@ export default function ModelApp() {
 
     let st = null;
     try { const r = await window.storage.get(STORES_KEY); st = JSON.parse(r.value); } catch (e) {}
+    if (Array.isArray(st)) { let fixed = false; st = st.map(x => { if (!x.pw) { fixed = true; return { ...x, pw: DEFAULT_PW }; } return x; });
+      if (fixed) { try { await window.storage.set(STORES_KEY, JSON.stringify(st)); } catch (e) {} } }
     if (!Array.isArray(st) || st.length === 0) {
       const used = [...new Set(ms.map(m => m.store).filter(Boolean))];
       const names = [...new Set([...DEFAULT_STORES, ...used])];
-      st = names.map(n => ({ name: n, pw: '', sameAs: DEFAULT_SAME_AS[n] || '' }));
+      st = names.map(n => ({ name: n, pw: DEFAULT_PW, sameAs: DEFAULT_SAME_AS[n] || '' }));
       try { await window.storage.set(STORES_KEY, JSON.stringify(st)); } catch (e) {}
     }
     setStores(st);
@@ -198,12 +204,13 @@ export default function ModelApp() {
           onPick={s => setView({ name:'staff', store:s })}
           workStore={workStore}
           onMe={() => signIn(me.id, workStore || me.store)}
-          onAdmin={() => setView({ name:'admin' })} />
+          onAdmin={() => setView({ name:'masterGate' })} />
       )}
 
       {view.name === 'staff' && (
         <StaffPickView store={view.store} stores={stores} members={members} signupPw={signupPw}
-          onSignIn={signIn} onSaveMembers={saveMembers} onBack={() => setView({ name:'stores' })} />
+          onSignIn={signIn} onSaveMembers={saveMembers} onBack={() => setView({ name:'stores' })}
+          onStoreAdmin={() => setView({ name:'storeAdminGate', store: view.store })} />
       )}
 
       {view.name === 'me' && me && (
@@ -212,10 +219,30 @@ export default function ModelApp() {
           onBack={() => setView({ name:'stores' })} onSignOut={signOut} />
       )}
 
-      {view.name === 'admin' && (
-        <AdminView stores={stores} members={members} menus={menus} records={records}
-          masterPw={masterPw} signupPw={signupPw} saving={saving}
-          onSaveMenusFor={saveMenusFor} onSaveMembers={saveMembers} onSaveStores={saveStores}
+      {view.name === 'storeAdminGate' && (
+        <PwGate title={`${view.store}の店舗管理`} note="この店舗の集計・メニュー・名簿を見ます"
+          expected={(stores.find(s => s.name === view.store) || {}).pw || DEFAULT_PW}
+          onOk={() => setView({ name:'storeAdmin', store: view.store })}
+          onBack={() => setView({ name:'staff', store: view.store })} />
+      )}
+
+      {view.name === 'storeAdmin' && (
+        <StoreAdminPage store={view.store} stores={stores} members={members} menus={menus} records={records}
+          saving={saving} onSaveMenusFor={saveMenusFor} onSaveMembers={saveMembers} onSaveStores={saveStores}
+          onBack={() => setView({ name:'staff', store: view.store })} />
+      )}
+
+      {view.name === 'masterGate' && (
+        <PwGate title="総管理" note="全店の集計とランキング、パスワードの設定"
+          expected={masterPw || DEFAULT_PW}
+          onOk={() => setView({ name:'master' })}
+          onBack={() => setView({ name:'stores' })} />
+      )}
+
+      {view.name === 'master' && (
+        <MasterPage stores={stores} members={members} menus={menus} records={records} saving={saving}
+          signupPw={signupPw} masterPw={masterPw}
+          onSaveMembers={saveMembers} onSaveStores={saveStores}
           onSavePasswords={async (signup, master) => {
             try {
               await window.storage.set(SIGNUP_PW_KEY, signup);
@@ -293,14 +320,14 @@ function StorePickView({ stores, members, me, workStore, onPick, onMe, onAdmin }
 
       <button onClick={onAdmin}
         style={{ display:'flex', alignItems:'center', gap:'6px', padding:'10px 16px', borderRadius:'10px', border:`1px solid ${C.line}`, background:C.card, color:C.mute, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-        <Lock size={13} /> 管理者
+        <Lock size={13} /> 総管理（全店の集計・ランキング・パスワード設定）
       </button>
     </>
   );
 }
 
 // ─── スタッフを選ぶ → パスワード ────────────────────────────────
-function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembers, onBack }) {
+function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembers, onBack, onStoreAdmin }) {
   const [picked, setPicked] = useState(null);
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
@@ -360,7 +387,12 @@ function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembe
               ))}
             </div>
           </div>
-        ))
+        )).concat([
+          <button key="__admin__" onClick={onStoreAdmin}
+            style={{ display:'flex', alignItems:'center', gap:'6px', marginTop:'16px', padding:'10px 16px', borderRadius:'10px', border:`1px solid ${C.line}`, background:C.card, color:C.mute, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Lock size={13} /> {store}の店舗管理
+          </button>
+        ])
       ) : (
         <div style={{ maxWidth:'340px', margin:'0 auto' }}>
           <div style={{ fontSize:'17px', fontWeight:700, color:C.text, marginBottom:'4px', textAlign:'center' }}>{target.name} さん</div>
@@ -579,105 +611,209 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
   );
 }
 
-// ─── 管理者 ─────────────────────────────────────────────────────
-// 総管理者は全店。店舗管理者は自分の店舗だけ。
-function AdminView({ stores, members, menus, records, masterPw, signupPw, saving,
-  onSaveMenusFor, onSaveMembers, onSaveStores, onSavePasswords, onSeed, onBack }) {
-  const [scope, setScope] = useState(() => {
-    try { const v = JSON.parse(sessionStorage.getItem('model_admin_scope') || 'null'); return v; } catch (e) { return null; }
-  });
+// ─── パスワードの入口 ───────────────────────────────────────────
+function PwGate({ title, note, expected, onOk, onBack }) {
   const [pw, setPw] = useState('');
   const [msg, setMsg] = useState('');
-  const [tab, setTab] = useState('rank');
-  const [ym, setYm] = useState(thisMonth());
-  const [pickStore, setPickStore] = useState('');   // 総管理者が見る店舗（空＝全店）
+  function go() { if (pw.trim() === expected) onOk(); else setMsg('パスワードが違います'); }
+  return (
+    <div style={{ maxWidth:'340px', margin:'36px auto', textAlign:'center' }}>
+      <Lock size={22} color={C.mute} style={{ marginBottom:'10px' }} />
+      <div style={{ fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'6px' }}>{title}</div>
+      {note && <div style={{ fontSize:'11px', color:C.mute, marginBottom:'16px', lineHeight:1.7 }}>{note}</div>}
+      <input type="password" value={pw} autoFocus onChange={e => { setPw(e.target.value); setMsg(''); }}
+        onKeyDown={e => e.key === 'Enter' && go()}
+        style={{ width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${msg ? C.ng : C.line}`, fontSize:'14px', boxSizing:'border-box', textAlign:'center' }} />
+      {msg && <div style={{ fontSize:'12px', color:C.ng, marginTop:'8px' }}>{msg}</div>}
+      <button onClick={go}
+        style={{ width:'100%', marginTop:'12px', padding:'12px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>開く</button>
+      <button onClick={onBack} style={{ marginTop:'10px', background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline' }}>戻る</button>
+    </div>
+  );
+}
 
-  function tryOpen() {
-    const v = pw.trim();
-    if (masterPw && v === masterPw) { grant({ kind:'master' }); return; }
-    const hit = stores.find(s => s.pw && s.pw === v);
-    if (hit) { grant({ kind:'store', store: hit.name }); return; }
-    if (!masterPw && !v) { grant({ kind:'master' }); return; }   // 未設定のうちは素通り
-    setMsg('パスワードが違います');
-  }
-  function grant(sc) { setScope(sc); try { sessionStorage.setItem('model_admin_scope', JSON.stringify(sc)); } catch (e) {} }
-
-  if (!scope) {
-    const open = !masterPw && stores.every(s => !s.pw);
-    return (
-      <div style={{ maxWidth:'340px', margin:'36px auto', textAlign:'center' }}>
-        <Lock size={22} color={C.mute} style={{ marginBottom:'10px' }} />
-        <div style={{ fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'6px' }}>管理者のパスワード</div>
-        <div style={{ fontSize:'11px', color:C.mute, marginBottom:'16px', lineHeight:1.7 }}>
-          {open ? 'まだ設定されていないので、そのまま開けます。' : '総管理者は全店、店舗のパスワードはその店舗だけが見られます。'}
-        </div>
-        <input type="password" value={pw} autoFocus onChange={e => { setPw(e.target.value); setMsg(''); }}
-          onKeyDown={e => e.key === 'Enter' && tryOpen()}
-          style={{ width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${msg ? C.ng : C.line}`, fontSize:'14px', boxSizing:'border-box', textAlign:'center' }} />
-        {msg && <div style={{ fontSize:'12px', color:C.ng, marginTop:'8px' }}>{msg}</div>}
-        <button onClick={tryOpen}
-          style={{ width:'100%', marginTop:'12px', padding:'12px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>開く</button>
-        <button onClick={onBack} style={{ marginTop:'10px', background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline' }}>戻る</button>
-      </div>
-    );
-  }
-
-  const isMaster = scope.kind === 'master';
-  const viewStore = isMaster ? pickStore : scope.store;     // '' = 全店
-  const pool = viewStore ? poolOf(stores, viewStore) : '';
-  const scopedMembers = viewStore ? members.filter(m => (m.store || '') === pool) : members;
-
-  const months = monthsOf(records);
-  // 集計は「どの店舗でやったか」で絞る。GINZA と GINZA U はメンバーが同じでも記録は別
+// 月の集計をまとめて出す
+function summarize(records, members, ym, store) {
   const inMonth = Object.values(records).filter(r =>
-    (r.date || '').startsWith(ym) && (!viewStore || (r.store || '') === viewStore));
-  const byMember = {};
-  inMonth.forEach(r => { const x = byMember[r.memberId] || (byMember[r.memberId] = { n:0, cost:0 }); x.n += 1; x.cost += (r.cost || 0); });
-  const rank = scopedMembers.map(m => ({ ...m, ...(byMember[m.id] || { n:0, cost:0 }) }))
+    (r.date || '').startsWith(ym) && (!store || (r.store || '') === store));
+  const by = {};
+  inMonth.forEach(r => { const x = by[r.memberId] || (by[r.memberId] = { n:0, cost:0 }); x.n += 1; x.cost += (r.cost || 0); });
+  const rows = members.map(m => ({ ...m, ...(by[m.id] || { n:0, cost:0 }) }))
     .sort((a, b) => b.n - a.n || b.cost - a.cost || a.name.localeCompare(b.name, 'ja'));
-  const done = rank.filter(r => r.n > 0);
-  const totalCost = inMonth.reduce((n, r) => n + (r.cost || 0), 0);
+  return { inMonth, rows, done: rows.filter(r => r.n > 0), cost: inMonth.reduce((n, r) => n + (r.cost || 0), 0) };
+}
 
-  // メニュー別（店舗ごとに表が違うので、記録の店舗の表から名前を引く）
-  const menuCount = {};
+function RankTable({ rows, showStore }) {
+  const th = { padding:'8px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign:'left', whiteSpace:'nowrap' };
+  const td = { padding:'8px 10px', fontSize:'12px', color:C.text, whiteSpace:'nowrap' };
+  return (
+    <div style={{ overflowX:'auto' }}>
+      <table style={{ width:'100%', borderCollapse:'collapse' }}>
+        <thead><tr style={{ background:'#FBF9F5' }}>
+          <th style={th}>順位</th><th style={th}>名前</th>{showStore && <th style={th}>店舗</th>}
+          <th style={{ ...th, textAlign:'right' }}>人数</th><th style={{ ...th, textAlign:'right' }}>材料費</th>
+        </tr></thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan={showStore ? 5 : 4} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>この月の記録はまだありません</td></tr>}
+          {rows.map((r, i) => (
+            <tr key={r.id} style={{ borderTop:'1px solid #F2EEE5' }}>
+              <td style={{ ...td, fontWeight:700, color: i < 3 ? C.gold : C.mute }}>{i + 1}</td>
+              <td style={{ ...td, fontWeight:600 }}>{r.name}</td>
+              {showStore && <td style={{ ...td, color:C.mute }}>{r.store || '―'}</td>}
+              <td style={{ ...td, textAlign:'right', fontWeight:700 }}>{r.n}人</td>
+              <td style={{ ...td, textAlign:'right', color:C.mute }}>{yen(r.cost)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MenuBreakdown({ inMonth, menus, showStore }) {
+  const count = {};
   inMonth.forEach(r => (r.menuIds || []).forEach(id => {
     const st = r.store || '';
     const mm = (menus[st] || []).find(x => x.id === id);
     const key = (mm ? mm.name : '（消されたメニュー）') + '|' + st;
-    const e = menuCount[key] || (menuCount[key] = { name: mm ? mm.name : '（消されたメニュー）', store: st, n:0, cost:0 });
+    const e = count[key] || (count[key] = { name: mm ? mm.name : '（消されたメニュー）', store: st, n:0, cost:0 });
     e.n += 1; e.cost += (mm ? (mm.cost || 0) : 0);
   }));
-  const menuRows = Object.values(menuCount).sort((a, b) => b.n - a.n);
+  const rows = Object.values(count).sort((a, b) => b.n - a.n);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginTop:'14px' }}>
+      <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>メニュー別</div>
+      {rows.map((m, i) => (
+        <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', padding:'5px 0', borderTop: i === 0 ? 'none' : '1px solid #F7F4EE' }}>
+          <span>{m.name}{showStore && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>{m.store}</span>}</span>
+          <span style={{ color:C.mute }}>{m.n}件　{yen(m.cost)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── 店舗管理ページ ─────────────────────────────────────────────
+function StoreAdminPage({ store, stores, members, menus, records, saving,
+  onSaveMenusFor, onSaveMembers, onSaveStores, onBack }) {
+  const [tab, setTab] = useState('rank');
+  const [ym, setYm] = useState(thisMonth());
+  const [pw, setPw] = useState(() => (stores.find(s => s.name === store) || {}).pw || '');
+  const [pwMsg, setPwMsg] = useState('');
+
+  const pool = poolOf(stores, store);
+  const staff = members.filter(m => (m.store || '') === pool);
+  const { inMonth, rows, done, cost } = summarize(records, staff, ym, store);
+  const months = monthsOf(records);
+
+  return (
+    <>
+      <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> {store}に戻る
+      </button>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text }}>
+        {store}<span style={{ fontSize:'11px', fontWeight:700, padding:'3px 9px', borderRadius:'999px', marginLeft:'10px', background:C.soft, color:C.mute }}>店舗管理</span>
+      </h1>
+
+      <div style={{ display:'flex', gap:'4px', background:C.soft, borderRadius:'10px', padding:'4px', marginBottom:'16px', width:'fit-content', flexWrap:'wrap' }}>
+        {[{ k:'rank', l:'集計', i:BarChart2 }, { k:'menus', l:'メニューと材料費', i:Calendar },
+          { k:'members', l:'名簿', i:Users }, { k:'pw', l:'パスワード', i:Lock }].map(({ k, l, i:Icon }) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{ display:'flex', alignItems:'center', gap:'6px', padding:'8px 14px', borderRadius:'8px', border:'none',
+              background: tab === k ? '#FFF' : 'transparent', color: tab === k ? C.text : C.mute,
+              fontWeight: tab === k ? 600 : 500, fontSize:'13px', cursor:'pointer' }}>
+            <Icon size={14} /> {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'rank' && (<>
+        <select value={ym} onChange={e => setYm(e.target.value)} style={{ ...selStyle, marginBottom:'12px' }}>
+          {months.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
+        </select>
+        <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
+          <Stat label="のべ人数" value={inMonth.length + '人'} big />
+          <Stat label="やった人" value={done.length + '／' + staff.length + '名'} />
+          <Stat label="材料費の合計" value={yen(cost)} />
+        </div>
+        <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden' }}>
+          <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
+            {fmtMonth(ym)}のランキング<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>やった人数順</span>
+          </div>
+          <RankTable rows={done} />
+          {rows.filter(r => r.n === 0).length > 0 && (
+            <div style={{ padding:'10px 14px', borderTop:`1px solid ${C.line}`, fontSize:'11px', color:C.mute, lineHeight:1.8 }}>
+              この月に記録がない人 {rows.filter(r => r.n === 0).length}名：{rows.filter(r => r.n === 0).map(r => r.name).join('、')}
+            </div>
+          )}
+        </div>
+        <MenuBreakdown inMonth={inMonth} menus={menus} />
+      </>)}
+
+      {tab === 'menus' && (
+        <MenuEditor key={store} store={store} menus={menus[store] || []} saving={saving}
+          onSave={list => onSaveMenusFor(store, list)} />
+      )}
+
+      {tab === 'members' && (
+        <MemberAdmin members={staff} allMembers={members} stores={stores} records={records}
+          poolNote={pool !== store ? `${store} は ${pool} と同じメンバーです` : ''}
+          isMaster={false} saving={saving} onSave={onSaveMembers} onSeed={null} />
+      )}
+
+      {tab === 'pw' && (
+        <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'16px' }}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'6px' }}>{store}の店舗パスワード</div>
+          <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
+            この画面を開くためのパスワードです。変えたらこの店舗の管理者に伝えてください。
+          </div>
+          <input type="text" value={pw} onChange={e => { setPw(e.target.value); setPwMsg(''); }}
+            style={{ ...selStyle, width:'100%', boxSizing:'border-box', marginBottom:'10px' }} />
+          <button onClick={async () => {
+              const v = pw.trim();
+              if (!v) { setPwMsg('空にはできません'); return; }
+              await onSaveStores(stores.map(s => s.name === store ? { ...s, pw: v } : s));
+              setPwMsg('保存しました');
+            }}
+            style={{ padding:'10px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+            保存する
+          </button>
+          {pwMsg && <span style={{ fontSize:'12px', color: pwMsg === '保存しました' ? C.ok : C.ng, marginLeft:'10px' }}>{pwMsg}</span>}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── 総管理ページ ───────────────────────────────────────────────
+function MasterPage({ stores, members, menus, records, saving, signupPw, masterPw,
+  onSaveMembers, onSaveStores, onSavePasswords, onSeed, onBack }) {
+  const [tab, setTab] = useState('rank');
+  const [ym, setYm] = useState(thisMonth());
+  const months = monthsOf(records);
+  const all = summarize(records, members, ym, '');
+
+  const perStore = stores.map(s => {
+    const staff = members.filter(m => (m.store || '') === poolOf(stores, s.name));
+    const r = summarize(records, staff, ym, s.name);
+    return { name:s.name, staff:staff.length, n:r.inMonth.length, done:r.done.length, cost:r.cost };
+  });
 
   const th = { padding:'8px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign:'left', whiteSpace:'nowrap' };
   const td = { padding:'8px 10px', fontSize:'12px', color:C.text, whiteSpace:'nowrap' };
 
   return (
     <>
-      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
-        <div>
-          <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
-            <ChevronLeft size={12} /> 店舗選択に戻る
-          </button>
-          <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text }}>
-            管理者
-            <span style={{ fontSize:'11px', fontWeight:700, padding:'3px 9px', borderRadius:'999px', marginLeft:'10px',
-              background: isMaster ? C.okBg : C.soft, color: isMaster ? C.ok : C.mute }}>
-              {isMaster ? '総管理者・全店' : scope.store}
-            </span>
-          </h1>
-        </div>
-        {isMaster && (
-          <select value={pickStore} onChange={e => setPickStore(e.target.value)} style={selStyle}>
-            <option value="">全店</option>
-            {stores.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-          </select>
-        )}
-      </div>
+      <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> 店舗選択に戻る
+      </button>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text }}>
+        総管理<span style={{ fontSize:'11px', fontWeight:700, padding:'3px 9px', borderRadius:'999px', marginLeft:'10px', background:C.okBg, color:C.ok }}>全店</span>
+      </h1>
 
       <div style={{ display:'flex', gap:'4px', background:C.soft, borderRadius:'10px', padding:'4px', marginBottom:'16px', width:'fit-content', flexWrap:'wrap' }}>
-        {[{ k:'rank', l:'集計', i:BarChart2 }, { k:'menus', l:'メニューと材料費', i:Calendar }, { k:'members', l:'名簿', i:Users }]
-          .concat(isMaster ? [{ k:'stores', l:'店舗とパスワード', i:Store }] : []).map(({ k, l, i:Icon }) => (
+        {[{ k:'rank', l:'集計', i:BarChart2 }, { k:'members', l:'名簿', i:Users }, { k:'stores', l:'店舗とパスワード', i:Store }].map(({ k, l, i:Icon }) => (
           <button key={k} onClick={() => setTab(k)}
             style={{ display:'flex', alignItems:'center', gap:'6px', padding:'8px 14px', borderRadius:'8px', border:'none',
               background: tab === k ? '#FFF' : 'transparent', color: tab === k ? C.text : C.mute,
@@ -693,74 +829,53 @@ function AdminView({ stores, members, menus, records, masterPw, signupPw, saving
         </select>
 
         <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
-          <Stat label="のべ人数" value={inMonth.length + '人'} big />
-          <Stat label="やった人" value={done.length + '／' + scopedMembers.length + '名'} />
-          <Stat label="材料費の合計" value={yen(totalCost)} />
+          <Stat label="のべ人数" value={all.inMonth.length + '人'} big />
+          <Stat label="やった人" value={all.done.length + '／' + members.length + '名'} />
+          <Stat label="材料費の合計" value={yen(all.cost)} />
         </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
-          <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
-            {fmtMonth(ym)}のランキング
-            <span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>
-              やった人数順・{viewStore || '全店'}
-            </span>
-          </div>
+          <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>各店の集計</div>
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse' }}>
               <thead><tr style={{ background:'#FBF9F5' }}>
-                <th style={th}>順位</th><th style={th}>名前</th><th style={th}>店舗</th>
-                <th style={{ ...th, textAlign:'right' }}>人数</th><th style={{ ...th, textAlign:'right' }}>材料費</th>
+                <th style={th}>店舗</th><th style={{ ...th, textAlign:'right' }}>のべ人数</th>
+                <th style={{ ...th, textAlign:'right' }}>やった人</th><th style={{ ...th, textAlign:'right' }}>材料費</th>
               </tr></thead>
               <tbody>
-                {done.length === 0 && <tr><td colSpan={5} style={{ ...td, textAlign:'center', color:C.mute, padding:'30px' }}>この月の記録はまだありません</td></tr>}
-                {done.map((r, i) => (
-                  <tr key={r.id} style={{ borderTop:'1px solid #F2EEE5' }}>
-                    <td style={{ ...td, fontWeight:700, color: i < 3 ? C.gold : C.mute }}>{i + 1}</td>
-                    <td style={{ ...td, fontWeight:600 }}>{r.name}</td>
-                    <td style={{ ...td, color:C.mute }}>{r.store || '―'}</td>
-                    <td style={{ ...td, textAlign:'right', fontWeight:700 }}>{r.n}人</td>
-                    <td style={{ ...td, textAlign:'right', color:C.mute }}>{yen(r.cost)}</td>
+                {perStore.map(s => (
+                  <tr key={s.name} style={{ borderTop:'1px solid #F2EEE5' }}>
+                    <td style={{ ...td, fontWeight:600 }}>{s.name}</td>
+                    <td style={{ ...td, textAlign:'right', fontWeight:700 }}>{s.n}人</td>
+                    <td style={{ ...td, textAlign:'right', color:C.mute }}>{s.done}／{s.staff}名</td>
+                    <td style={{ ...td, textAlign:'right', color:C.mute }}>{yen(s.cost)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {rank.filter(r => r.n === 0).length > 0 && (
+        </div>
+
+        <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden' }}>
+          <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
+            全店ランキング<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>やった人数順</span>
+          </div>
+          <RankTable rows={all.done} showStore />
+          {all.rows.filter(r => r.n === 0).length > 0 && (
             <div style={{ padding:'10px 14px', borderTop:`1px solid ${C.line}`, fontSize:'11px', color:C.mute, lineHeight:1.8 }}>
-              この月に記録がない人 {rank.filter(r => r.n === 0).length}名：{rank.filter(r => r.n === 0).map(r => r.name).join('、')}
+              この月に記録がない人 {all.rows.filter(r => r.n === 0).length}名：{all.rows.filter(r => r.n === 0).map(r => r.name).join('、')}
             </div>
           )}
         </div>
-
-        {menuRows.length > 0 && (
-          <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px' }}>
-            <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>メニュー別</div>
-            {menuRows.map((m, i) => (
-              <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', padding:'5px 0', borderTop: i === 0 ? 'none' : '1px solid #F7F4EE' }}>
-                <span>{m.name}{!viewStore && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>{m.store}</span>}</span>
-                <span style={{ color:C.mute }}>{m.n}件　{yen(m.cost)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <MenuBreakdown inMonth={all.inMonth} menus={menus} showStore />
       </>)}
 
-      {tab === 'menus' && (
-        viewStore
-          ? <MenuEditor key={viewStore} store={viewStore} menus={menus[viewStore] || []} saving={saving}
-              onSave={list => onSaveMenusFor(viewStore, list)} />
-          : <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'20px', fontSize:'12px', color:C.mute, lineHeight:1.8 }}>
-              メニューと材料費は店舗ごとです。上の店舗を選んでください。
-            </div>
-      )}
-
       {tab === 'members' && (
-        <MemberAdmin members={scopedMembers} allMembers={members} stores={stores} records={records}
-          poolNote={viewStore && pool !== viewStore ? `${viewStore} は ${pool} と同じメンバーです` : ''}
-          isMaster={isMaster} saving={saving} onSave={onSaveMembers} onSeed={onSeed} />
+        <MemberAdmin members={members} allMembers={members} stores={stores} records={records}
+          isMaster saving={saving} onSave={onSaveMembers} onSeed={onSeed} />
       )}
 
-      {tab === 'stores' && isMaster && (
+      {tab === 'stores' && (
         <StoreAdmin stores={stores} members={members} saving={saving}
           onSave={onSaveStores} onSaveMembers={onSaveMembers}
           signupPw={signupPw} masterPw={masterPw} onSavePasswords={onSavePasswords} />
@@ -883,7 +998,7 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
 
   return (
     <>
-      {isMaster && (
+      {isMaster && onSeed && (
         <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
           <button onClick={async () => { const r = await onSeed(); setImpMsg(r.added > 0 ? `${r.added}名を追加しました：${r.names.join('、')}` : '新しく追加する人はいませんでした'); }}
             style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
@@ -975,7 +1090,7 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
     const n = name.trim();
     if (!n) return;
     if (draft.some(s => s.name === n)) { alert('同じ店舗があります'); return; }
-    setDraft(d => [...d, { name: n, pw: '' }]);
+    setDraft(d => [...d, { name: n, pw: DEFAULT_PW, sameAs: '' }]);
     setName('');
   }
 

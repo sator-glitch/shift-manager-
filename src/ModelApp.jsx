@@ -21,7 +21,6 @@ const STORES_KEY   = 'model_stores_v1';     // [{name, pw, sameAs}] sameAs=メ�
 const MENUS_KEY    = 'model_menus_v1';      // { 店舗名: [{id,name,cost,category}] }
 const MEMBERS_KEY  = 'model_members_v1';    // [{id,name,cohort,store,pin}]
 const RECORDS_KEY  = 'model_records_v1';    // { recId: {...} }
-const SIGNUP_PW_KEY = 'model_signup_pw_v1';
 const MASTER_PW_KEY = 'model_master_pw_v1';
 const CURRICULUM_KEY = 'curriculum_v2';
 const LOCAL_ME = 'model_app_me';
@@ -71,7 +70,6 @@ export default function ModelApp() {
   const [menus, setMenus]     = useState({});
   const [members, setMembers] = useState([]);
   const [records, setRecords] = useState({});
-  const [signupPw, setSignupPw] = useState('');
   const [masterPw, setMasterPw] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -82,7 +80,6 @@ export default function ModelApp() {
 
   useEffect(() => { (async () => {
     try { const r = await window.storage.get(RECORDS_KEY); setRecords(JSON.parse(r.value) || {}); } catch (e) {}
-    try { const r = await window.storage.get(SIGNUP_PW_KEY); setSignupPw(r.value || ''); } catch (e) {}
     let mpw = null;
     try { const r = await window.storage.get(MASTER_PW_KEY); mpw = r.value; } catch (e) {}
     if (!mpw) { mpw = DEFAULT_PW; try { await window.storage.set(MASTER_PW_KEY, mpw); } catch (e) {} }
@@ -208,7 +205,7 @@ export default function ModelApp() {
       )}
 
       {view.name === 'staff' && (
-        <StaffPickView store={view.store} stores={stores} members={members} signupPw={signupPw}
+        <StaffPickView store={view.store} stores={stores} members={members}
           onSignIn={signIn} onSaveMembers={saveMembers} onBack={() => setView({ name:'stores' })}
           onStoreAdmin={() => setView({ name:'storeAdminGate', store: view.store })} />
       )}
@@ -241,15 +238,11 @@ export default function ModelApp() {
 
       {view.name === 'master' && (
         <MasterPage stores={stores} members={members} menus={menus} records={records} saving={saving}
-          signupPw={signupPw} masterPw={masterPw}
+          masterPw={masterPw}
           onSaveMembers={saveMembers} onSaveStores={saveStores}
-          onSavePasswords={async (signup, master) => {
-            try {
-              await window.storage.set(SIGNUP_PW_KEY, signup);
-              await window.storage.set(MASTER_PW_KEY, master);
-              setSignupPw(signup); setMasterPw(master);
-              return true;
-            } catch (e) { setErr('パスワードを保存できませんでした'); return false; }
+          onSaveMasterPw={async (master) => {
+            try { await window.storage.set(MASTER_PW_KEY, master); setMasterPw(master); return true; }
+            catch (e) { setErr('パスワードを保存できませんでした'); return false; }
           }}
           onSeed={async () => { const ms = await seedMembers(); if (!ms) return { added: 0 };
             const have = new Set(members.map(m => m.id));
@@ -327,11 +320,10 @@ function StorePickView({ stores, members, me, workStore, onPick, onMe, onAdmin }
 }
 
 // ─── スタッフを選ぶ → パスワード ────────────────────────────────
-function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembers, onBack, onStoreAdmin }) {
+function StaffPickView({ store, stores, members, onSignIn, onSaveMembers, onBack, onStoreAdmin }) {
   const [picked, setPicked] = useState(null);
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
-  const [word, setWord] = useState('');
   const [msg, setMsg] = useState('');
 
   const pool = poolOf(stores, store);
@@ -340,13 +332,12 @@ function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembe
   const target = picked ? members.find(m => m.id === picked) : null;
   const isNew = target && !target.pin;
 
-  function reset() { setPicked(null); setPin(''); setPin2(''); setWord(''); setMsg(''); }
+  function reset() { setPicked(null); setPin(''); setPin2(''); setMsg(''); }
 
   async function go() {
     if (!target) return;
     if (!/^\d{4}$/.test(pin)) { setMsg('パスワードは4桁の数字です'); return; }
     if (isNew) {
-      if (signupPw && word.trim() !== signupPw) { setMsg('合言葉が違います'); return; }
       if (pin !== pin2) { setMsg('2回入れたパスワードが違います'); return; }
       await onSaveMembers(members.map(m => m.id === target.id ? { ...m, pin: hashPin(m.name, pin) } : m));
       onSignIn(target.id, store);
@@ -401,14 +392,6 @@ function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembe
               ? <>はじめてなので、<b style={{ color:C.text }}>自分で4桁のパスワード</b>を決めてください。<br />次から同じ番号で入ります。</>
               : <>パスワードを入れてください。</>}
           </div>
-
-          {isNew && signupPw && (
-            <div style={{ marginBottom:'12px' }}>
-              <label style={lbl}>合言葉</label>
-              <input value={word} onChange={e => { setWord(e.target.value); setMsg(''); }}
-                style={{ ...inp, letterSpacing:'normal' }} />
-            </div>
-          )}
 
           <div style={{ marginBottom:'12px' }}>
             <label style={lbl}>パスワード<span style={{ fontWeight:500, color:C.mute, marginLeft:'6px' }}>4桁の数字</span></label>
@@ -787,8 +770,8 @@ function StoreAdminPage({ store, stores, members, menus, records, saving,
 }
 
 // ─── 総管理ページ ───────────────────────────────────────────────
-function MasterPage({ stores, members, menus, records, saving, signupPw, masterPw,
-  onSaveMembers, onSaveStores, onSavePasswords, onSeed, onBack }) {
+function MasterPage({ stores, members, menus, records, saving, masterPw,
+  onSaveMembers, onSaveStores, onSaveMasterPw, onSeed, onBack }) {
   const [tab, setTab] = useState('rank');
   const [ym, setYm] = useState(thisMonth());
   const months = monthsOf(records);
@@ -878,7 +861,7 @@ function MasterPage({ stores, members, menus, records, saving, signupPw, masterP
       {tab === 'stores' && (
         <StoreAdmin stores={stores} members={members} saving={saving}
           onSave={onSaveStores} onSaveMembers={onSaveMembers}
-          signupPw={signupPw} masterPw={masterPw} onSavePasswords={onSavePasswords} />
+          masterPw={masterPw} onSaveMasterPw={onSaveMasterPw} />
       )}
     </>
   );
@@ -1064,10 +1047,9 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
 }
 
 // ─── 店舗とパスワード（総管理者のみ）────────────────────────────
-function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, masterPw, onSavePasswords }) {
+function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, masterPw, onSaveMasterPw }) {
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(stores || [])));
   const [name, setName] = useState('');
-  const [pw1, setPw1] = useState(signupPw || '');
   const [pw2, setPw2] = useState(masterPw || '');
   const [pwMsg, setPwMsg] = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(stores);
@@ -1138,25 +1120,23 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginTop:'16px' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>
-          <Lock size={13} /> 全体のパスワード
+          <Lock size={13} /> 総管理のパスワード
         </div>
         <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
-          合言葉は、スタッフがはじめて登録するときに一度だけ聞きます。空欄にすると誰でも登録できます。<br />
-          総管理者のパスワードは全店のデータを開くためのものです。
+          全店のデータを開くためのパスワードです。
         </div>
-        <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>登録の合言葉
-          <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
-            style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
-        </label>
-        <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>総管理者のパスワード
+        <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>総管理のパスワード
           <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
             style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
         </label>
-        <button onClick={async () => { const okk = await onSavePasswords(pw1.trim(), pw2.trim()); setPwMsg(okk ? '保存しました' : ''); }}
+        <button onClick={async () => {
+            const v = pw2.trim();
+            if (!v) { setPwMsg('空にはできません'); return; }
+            const okk = await onSaveMasterPw(v); setPwMsg(okk ? '保存しました' : ''); }}
           style={{ padding:'9px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
           パスワードを保存
         </button>
-        {pwMsg && <span style={{ fontSize:'12px', color:C.ok, marginLeft:'10px' }}>{pwMsg}</span>}
+        {pwMsg && <span style={{ fontSize:'12px', color: pwMsg === '保存しました' ? C.ok : C.ng, marginLeft:'10px' }}>{pwMsg}</span>}
       </div>
     </>
   );

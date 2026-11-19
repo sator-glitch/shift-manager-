@@ -167,11 +167,28 @@ export default function ModelApp() {
     setSaving(false);
   }, []);
 
-  const saveStores = useCallback(async (next) => {
+  // 店舗の保存。自分が触っていないパスワードは、相手が変えた最新をそのまま残す
+  // （総管理が画面を開いている間に店舗側がパスワードを変えても、戻してしまわないように）
+  const saveStores = useCallback(async (next, base) => {
     setSaving(true);
-    try { await window.storage.set(STORES_KEY, JSON.stringify(next)); setStores(next); }
+    let merged = next;
+    try {
+      let remote = null;
+      try { const r = await window.storage.get(STORES_KEY); remote = JSON.parse(r.value); } catch (e) {}
+      if (Array.isArray(remote) && Array.isArray(base)) {
+        merged = next.map(s => {
+          const b = base.find(x => x.name === s.name);
+          const r2 = remote.find(x => x.name === s.name);
+          if (b && r2 && (b.pw || '') === (s.pw || '')) return { ...s, pw: r2.pw };
+          return s;
+        });
+      }
+      await window.storage.set(STORES_KEY, JSON.stringify(merged));
+      setStores(merged);
+    }
     catch (e) { setErr('店舗を保存できませんでした'); }
     setSaving(false);
+    return merged;
   }, []);
 
   const me = members.find(m => m.id === meId) || null;
@@ -756,7 +773,7 @@ function StoreAdminPage({ store, stores, members, menus, records, saving,
           <button onClick={async () => {
               const v = pw.trim();
               if (!v) { setPwMsg('空にはできません'); return; }
-              await onSaveStores(stores.map(s => s.name === store ? { ...s, pw: v } : s));
+              await onSaveStores(stores.map(s => s.name === store ? { ...s, pw: v } : s), stores);
               setPwMsg('保存しました');
             }}
             style={{ padding:'10px 18px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
@@ -1048,11 +1065,12 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
 
 // ─── 店舗とパスワード（総管理者のみ）────────────────────────────
 function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, masterPw, onSaveMasterPw }) {
+  const [base, setBase] = useState(() => JSON.parse(JSON.stringify(stores || [])));
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(stores || [])));
   const [name, setName] = useState('');
   const [pw2, setPw2] = useState(masterPw || '');
   const [pwMsg, setPwMsg] = useState('');
-  const dirty = JSON.stringify(draft) !== JSON.stringify(stores);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   const countOf = n => members.filter(m => (m.store || '') === poolOf(draft, n)).length;
 
   function set(i, patch) { setDraft(d => d.map((s, k) => k === i ? { ...s, ...patch } : s)); }
@@ -1080,7 +1098,8 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, masterPw, 
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
         店舗ごとのパスワードを入れておくと、その店舗の管理者は自分の店舗だけを見られます。空欄なら誰も入れません。<br />
-        スタッフを共有している店舗は、右の欄で「◯◯と同じ」を選んでください。名簿は共有され、メニューと集計は別々になります。
+        スタッフを共有している店舗は、右の欄で「◯◯と同じ」を選んでください。名簿は共有され、メニューと集計は別々になります。<br />
+        店舗側でパスワードを変えられた場合も、ここには今のパスワードがそのまま出ます。
       </div>
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
@@ -1116,7 +1135,9 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, masterPw, 
         </div>
       </div>
 
-      <SaveBar dirty={dirty} saving={saving} onSave={() => onSave(draft)} onReset={() => setDraft(JSON.parse(JSON.stringify(stores)))} />
+      <SaveBar dirty={dirty} saving={saving}
+        onSave={async () => { const saved = await onSave(draft, base); if (saved) { setBase(JSON.parse(JSON.stringify(saved))); setDraft(JSON.parse(JSON.stringify(saved))); } }}
+        onReset={() => setDraft(JSON.parse(JSON.stringify(base)))} />
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginTop:'16px' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>

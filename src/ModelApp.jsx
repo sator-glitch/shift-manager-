@@ -17,7 +17,7 @@ import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVer
 // 本人は名前＋自分で決めた4桁のパスワード。番号は平文では持たない。
 // ===========================================================================
 
-const STORES_KEY   = 'model_stores_v1';     // [{name, pw}]
+const STORES_KEY   = 'model_stores_v1';     // [{name, pw, sameAs}] sameAs=メンバーを借りる店舗
 const MENUS_KEY    = 'model_menus_v1';      // { 店舗名: [{id,name,cost,category}] }
 const MEMBERS_KEY  = 'model_members_v1';    // [{id,name,cohort,store,pin}]
 const RECORDS_KEY  = 'model_records_v1';    // { recId: {...} }
@@ -27,7 +27,15 @@ const CURRICULUM_KEY = 'curriculum_v2';
 const LOCAL_ME = 'model_app_me';
 
 const TARGET_COHORTS = ['2025年入社', '2026年入社'];
-const DEFAULT_STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'KICHIJOJI', 'KAMAKURA'];   // GINZA U は GINZA と同じ扱い
+const DEFAULT_STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'GINZA U', 'KICHIJOJI', 'KAMAKURA'];
+// GINZA U は GINZA と同じメンバーを使う（メニューと集計は別）
+const DEFAULT_SAME_AS = { 'GINZA U': 'GINZA' };
+
+// その店舗のスタッフを返す。sameAs があれば借りてくる
+function poolOf(stores, name) {
+  const s = (stores || []).find(x => x.name === name);
+  return (s && s.sameAs) ? s.sameAs : name;
+}
 const NO_STORE = '（店舗なし）';
 
 const C = {
@@ -68,6 +76,7 @@ export default function ModelApp() {
   const [saving, setSaving]   = useState(false);
   const [err, setErr]         = useState('');
   const [meId, setMeId]       = useState(() => { try { return localStorage.getItem(LOCAL_ME) || ''; } catch (e) { return ''; } });
+  const [workStore, setWorkStore] = useState(() => { try { return localStorage.getItem(LOCAL_ME + '_store') || ''; } catch (e) { return ''; } });
   const [view, setView]       = useState({ name:'stores' });   // stores | staff | me | admin
 
   useEffect(() => { (async () => {
@@ -94,7 +103,7 @@ export default function ModelApp() {
     if (!Array.isArray(st) || st.length === 0) {
       const used = [...new Set(ms.map(m => m.store).filter(Boolean))];
       const names = [...new Set([...DEFAULT_STORES, ...used])];
-      st = names.map(n => ({ name: n, pw: '' }));
+      st = names.map(n => ({ name: n, pw: '', sameAs: DEFAULT_SAME_AS[n] || '' }));
       try { await window.storage.set(STORES_KEY, JSON.stringify(st)); } catch (e) {}
     }
     setStores(st);
@@ -163,8 +172,16 @@ export default function ModelApp() {
   }, []);
 
   const me = members.find(m => m.id === meId) || null;
-  function signIn(id) { setMeId(id); try { localStorage.setItem(LOCAL_ME, id); } catch (e) {} setView({ name:'me' }); }
-  function signOut() { setMeId(''); try { localStorage.removeItem(LOCAL_ME); } catch (e) {} setView({ name:'stores' }); }
+  function signIn(id, store) {
+    setMeId(id); setWorkStore(store || '');
+    try { localStorage.setItem(LOCAL_ME, id); localStorage.setItem(LOCAL_ME + '_store', store || ''); } catch (e) {}
+    setView({ name:'me' });
+  }
+  function signOut() {
+    setMeId(''); setWorkStore('');
+    try { localStorage.removeItem(LOCAL_ME); localStorage.removeItem(LOCAL_ME + '_store'); } catch (e) {}
+    setView({ name:'stores' });
+  }
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
@@ -179,17 +196,18 @@ export default function ModelApp() {
       {view.name === 'stores' && (
         <StorePickView stores={stores} members={members} me={me}
           onPick={s => setView({ name:'staff', store:s })}
-          onMe={() => signIn(me.id)}
+          workStore={workStore}
+          onMe={() => signIn(me.id, workStore || me.store)}
           onAdmin={() => setView({ name:'admin' })} />
       )}
 
       {view.name === 'staff' && (
-        <StaffPickView store={view.store} members={members} signupPw={signupPw}
+        <StaffPickView store={view.store} stores={stores} members={members} signupPw={signupPw}
           onSignIn={signIn} onSaveMembers={saveMembers} onBack={() => setView({ name:'stores' })} />
       )}
 
       {view.name === 'me' && me && (
-        <MeView me={me} menus={menus[me.store] || []} records={records} saving={saving}
+        <MeView me={me} workStore={workStore || me.store || ''} menus={menus[workStore || me.store] || []} records={records} saving={saving}
           onSave={saveRecord} onRemove={removeRecord}
           onBack={() => setView({ name:'stores' })} onSignOut={signOut} />
       )}
@@ -235,8 +253,8 @@ function Stat({ label, value, big }) {
 }
 
 // ─── 最初のページ：店舗を選ぶ ───────────────────────────────────
-function StorePickView({ stores, members, me, onPick, onMe, onAdmin }) {
-  const countOf = s => members.filter(m => (m.store || '') === s).length;
+function StorePickView({ stores, members, me, workStore, onPick, onMe, onAdmin }) {
+  const countOf = s => members.filter(m => (m.store || '') === poolOf(stores, s)).length;
   const noStore = members.filter(m => !m.store);
   return (
     <>
@@ -248,6 +266,7 @@ function StorePickView({ stores, members, me, onPick, onMe, onAdmin }) {
           style={{ width:'100%', textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:'none', background:C.text, color:'#FFF', cursor:'pointer', marginBottom:'16px' }}>
           <div style={{ fontSize:'11px', opacity:0.75, marginBottom:'3px' }}>前回のつづき</div>
           <div style={{ fontSize:'16px', fontWeight:700 }}>{me.name} さんのページを開く</div>
+          {workStore && <div style={{ fontSize:'11px', opacity:0.75, marginTop:'3px' }}>{workStore}</div>}
         </button>
       )}
 
@@ -258,7 +277,9 @@ function StorePickView({ stores, members, me, onPick, onMe, onAdmin }) {
             <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'15px', fontWeight:700, color:C.text }}>
               <Store size={14} color={C.mute} /> {s.name}
             </div>
-            <div style={{ fontSize:'11px', color:C.mute, marginTop:'5px' }}>{countOf(s.name)}名</div>
+            <div style={{ fontSize:'11px', color:C.mute, marginTop:'5px' }}>
+              {countOf(s.name)}名{s.sameAs && <span style={{ marginLeft:'6px' }}>{s.sameAs}と同じ</span>}
+            </div>
           </button>
         ))}
         {noStore.length > 0 && (
@@ -279,14 +300,15 @@ function StorePickView({ stores, members, me, onPick, onMe, onAdmin }) {
 }
 
 // ─── スタッフを選ぶ → パスワード ────────────────────────────────
-function StaffPickView({ store, members, signupPw, onSignIn, onSaveMembers, onBack }) {
+function StaffPickView({ store, stores, members, signupPw, onSignIn, onSaveMembers, onBack }) {
   const [picked, setPicked] = useState(null);
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [word, setWord] = useState('');
   const [msg, setMsg] = useState('');
 
-  const list = members.filter(m => (m.store || '') === store);
+  const pool = poolOf(stores, store);
+  const list = members.filter(m => (m.store || '') === pool);
   const cohorts = [...new Set(list.map(m => m.cohort))].sort();
   const target = picked ? members.find(m => m.id === picked) : null;
   const isNew = target && !target.pin;
@@ -300,10 +322,10 @@ function StaffPickView({ store, members, signupPw, onSignIn, onSaveMembers, onBa
       if (signupPw && word.trim() !== signupPw) { setMsg('合言葉が違います'); return; }
       if (pin !== pin2) { setMsg('2回入れたパスワードが違います'); return; }
       await onSaveMembers(members.map(m => m.id === target.id ? { ...m, pin: hashPin(m.name, pin) } : m));
-      onSignIn(target.id);
+      onSignIn(target.id, store);
     } else {
       if (target.pin !== hashPin(target.name, pin)) { setMsg('パスワードが違います'); return; }
-      onSignIn(target.id);
+      onSignIn(target.id, store);
     }
   }
 
@@ -389,12 +411,12 @@ function StaffPickView({ store, members, signupPw, onSignIn, onSaveMembers, onBa
 }
 
 // ─── 本人のページ ───────────────────────────────────────────────
-function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOut }) {
+function MeView({ me, workStore, menus, records, saving, onSave, onRemove, onBack, onSignOut }) {
   const [ym, setYm] = useState(thisMonth());
   const [editing, setEditing] = useState(null);
 
   const mine = useMemo(() => Object.values(records)
-    .filter(r => r.memberId === me.id)
+    .filter(r => r.memberId === me.id && (!workStore || (r.store || '') === workStore))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '')), [records, me.id]);
   const months = monthsOf(Object.fromEntries(mine.map(r => [r.id, r])));
   const list = mine.filter(r => (r.date || '').startsWith(ym));
@@ -402,7 +424,7 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
   const menuById = Object.fromEntries((menus || []).map(m => [m.id, m]));
 
   function startNew() {
-    setEditing({ id: uid(), memberId: me.id, store: me.store || '', date: today(), menuIds: [], cost: 0, createdAt: new Date().toISOString() });
+    setEditing({ id: uid(), memberId: me.id, store: workStore || me.store || '', date: today(), menuIds: [], cost: 0, createdAt: new Date().toISOString() });
   }
 
   return (
@@ -413,7 +435,10 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
             <ChevronLeft size={12} /> 店舗選択に戻る
           </button>
           <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text }}>{me.name} さん</h1>
-          <div style={{ fontSize:'12px', color:C.mute, marginTop:'2px' }}>{saving ? '保存中…' : (me.store || NO_STORE)}</div>
+          <div style={{ fontSize:'12px', color:C.mute, marginTop:'2px' }}>
+            {saving ? '保存中…' : <>記録する店舗：<b style={{ color:C.text }}>{workStore || NO_STORE}</b>
+              <button onClick={onBack} style={{ marginLeft:'8px', background:'none', border:'none', color:C.mute, fontSize:'11px', cursor:'pointer', textDecoration:'underline', padding:0 }}>変える</button></>}
+          </div>
         </div>
         {!editing && (
           <button onClick={startNew}
@@ -599,12 +624,13 @@ function AdminView({ stores, members, menus, records, masterPw, signupPw, saving
 
   const isMaster = scope.kind === 'master';
   const viewStore = isMaster ? pickStore : scope.store;     // '' = 全店
-  const inScope = m => !viewStore || (m.store || '') === viewStore;
-  const scopedMembers = members.filter(inScope);
-  const scopedIds = new Set(scopedMembers.map(m => m.id));
+  const pool = viewStore ? poolOf(stores, viewStore) : '';
+  const scopedMembers = viewStore ? members.filter(m => (m.store || '') === pool) : members;
 
   const months = monthsOf(records);
-  const inMonth = Object.values(records).filter(r => (r.date || '').startsWith(ym) && scopedIds.has(r.memberId));
+  // 集計は「どの店舗でやったか」で絞る。GINZA と GINZA U はメンバーが同じでも記録は別
+  const inMonth = Object.values(records).filter(r =>
+    (r.date || '').startsWith(ym) && (!viewStore || (r.store || '') === viewStore));
   const byMember = {};
   inMonth.forEach(r => { const x = byMember[r.memberId] || (byMember[r.memberId] = { n:0, cost:0 }); x.n += 1; x.cost += (r.cost || 0); });
   const rank = scopedMembers.map(m => ({ ...m, ...(byMember[m.id] || { n:0, cost:0 }) }))
@@ -615,7 +641,7 @@ function AdminView({ stores, members, menus, records, masterPw, signupPw, saving
   // メニュー別（店舗ごとに表が違うので、記録の店舗の表から名前を引く）
   const menuCount = {};
   inMonth.forEach(r => (r.menuIds || []).forEach(id => {
-    const st = r.store || (members.find(m => m.id === r.memberId) || {}).store || '';
+    const st = r.store || '';
     const mm = (menus[st] || []).find(x => x.id === id);
     const key = (mm ? mm.name : '（消されたメニュー）') + '|' + st;
     const e = menuCount[key] || (menuCount[key] = { name: mm ? mm.name : '（消されたメニュー）', store: st, n:0, cost:0 });
@@ -730,6 +756,7 @@ function AdminView({ stores, members, menus, records, masterPw, signupPw, saving
 
       {tab === 'members' && (
         <MemberAdmin members={scopedMembers} allMembers={members} stores={stores} records={records}
+          poolNote={viewStore && pool !== viewStore ? `${viewStore} は ${pool} と同じメンバーです` : ''}
           isMaster={isMaster} saving={saving} onSave={onSaveMembers} onSeed={onSeed} />
       )}
 
@@ -836,7 +863,7 @@ function MenuEditor({ store, menus, onSave, saving }) {
 }
 
 // ─── 名簿 ───────────────────────────────────────────────────────
-function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, onSave, onSeed }) {
+function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, onSave, onSeed, poolNote }) {
   const [impMsg, setImpMsg] = useState('');
   const used = {};
   Object.values(records || {}).forEach(r => { used[r.memberId] = (used[r.memberId] || 0) + 1; });
@@ -868,6 +895,11 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
       {!isMaster && (
         <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
           この店舗のスタッフです。店舗の移動や名簿の追加は総管理者が行います。
+        </div>
+      )}
+      {poolNote && (
+        <div style={{ fontSize:'12px', color:C.text, lineHeight:1.7, marginBottom:'12px', padding:'10px 13px', borderRadius:'10px', background:C.soft }}>
+          {poolNote}
         </div>
       )}
 
@@ -924,7 +956,7 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
   const [pw2, setPw2] = useState(masterPw || '');
   const [pwMsg, setPwMsg] = useState('');
   const dirty = JSON.stringify(draft) !== JSON.stringify(stores);
-  const countOf = n => members.filter(m => (m.store || '') === n).length;
+  const countOf = n => members.filter(m => (m.store || '') === poolOf(draft, n)).length;
 
   function set(i, patch) { setDraft(d => d.map((s, k) => k === i ? { ...s, ...patch } : s)); }
   function rename(i, next) {
@@ -935,7 +967,7 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
   }
   function del(i) {
     const s = draft[i];
-    if (countOf(s.name) > 0) { alert(`${s.name}には${countOf(s.name)}名います。先に別の店舗へ移してください。`); return; }
+    if (!s.sameAs && countOf(s.name) > 0) { alert(`${s.name}には${countOf(s.name)}名います。先に別の店舗へ移してください。`); return; }
     if (!confirm(`店舗「${s.name}」を消します。メニューの表も見えなくなります。よろしいですか。`)) return;
     setDraft(d => d.filter((_, k) => k !== i));
   }
@@ -950,7 +982,8 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
   return (
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
-        店舗ごとのパスワードを入れておくと、その店舗の管理者は自分の店舗だけを見られます。空欄なら誰も入れません。
+        店舗ごとのパスワードを入れておくと、その店舗の管理者は自分の店舗だけを見られます。空欄なら誰も入れません。<br />
+        スタッフを共有している店舗は、右の欄で「◯◯と同じ」を選んでください。名簿は共有され、メニューと集計は別々になります。
       </div>
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
@@ -963,7 +996,13 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, 
               style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', fontWeight:700 }} />
             <span style={{ fontSize:'11px', color:C.mute, width:'42px', textAlign:'right' }}>{countOf(s.name)}名</span>
             <input value={s.pw || ''} onChange={e => set(i, { pw: e.target.value })} placeholder="この店舗のパスワード"
-              style={{ flex:'1 1 150px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
+              style={{ flex:'1 1 130px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
+            <select value={s.sameAs || ''} onChange={e => set(i, { sameAs: e.target.value })}
+              title="メンバーを借りる店舗"
+              style={{ ...selStyle, flex:'0 0 140px', padding:'8px 6px', fontSize:'12px' }}>
+              <option value="">メンバーは自分の店舗</option>
+              {draft.filter((x, k) => k !== i && !x.sameAs).map(x => <option key={x.name} value={x.name}>{x.name}と同じ</option>)}
+            </select>
             <button onClick={() => del(i)} title="削除"
               style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
               <Trash2 size={13} />

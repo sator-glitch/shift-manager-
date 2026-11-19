@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVertical } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVertical, Store } from 'lucide-react';
 
 // ===========================================================================
 // モデル実績管理
@@ -7,22 +7,28 @@ import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVer
 // アシスタントが営業後にやったモデルを、本人が記録する。
 //   ・1モデル＝1件。同じ人が2回来たら2件（延べ回数）
 //   ・メニューは複数選べる。材料費はメニューごとに決まっていて自動で合算
+//   ・メニューと材料費は【店舗ごと】に別の表を持つ
 //   ・本人は自分のページだけ。いつでも直せる
-//   ・管理者は閲覧と集計だけ（記録は編集しない）。毎月のランキングは「やった人数」順
+//   ・管理者は閲覧と集計だけ。毎月のランキングは「やった人数」順
+//       総管理者 … 全店のデータ。店舗の追加やパスワードの設定もできる
+//       店舗管理者 … 自分の店舗だけ
 //
-// 入り口は名前＋自分で決めた4桁の暗証番号。URLは1本で済む。
-// 暗証番号は平文では持たず、名前と混ぜたハッシュだけを保存する。
+// 最初のページは店舗選択。その中にその店舗のスタッフが並ぶ。
+// 本人は名前＋自分で決めた4桁のパスワード。番号は平文では持たない。
 // ===========================================================================
 
-const MENUS_KEY    = 'model_menus_v1';
-const MEMBERS_KEY  = 'model_members_v1';
-const RECORDS_KEY  = 'model_records_v1';
-const SIGNUP_PW_KEY = 'model_signup_pw_v1';   // 登録するときの合言葉
-const ADMIN_PW_KEY  = 'model_admin_pw_v1';    // 管理者
+const STORES_KEY   = 'model_stores_v1';     // [{name, pw}]
+const MENUS_KEY    = 'model_menus_v1';      // { 店舗名: [{id,name,cost,category}] }
+const MEMBERS_KEY  = 'model_members_v1';    // [{id,name,cohort,store,pin}]
+const RECORDS_KEY  = 'model_records_v1';    // { recId: {...} }
+const SIGNUP_PW_KEY = 'model_signup_pw_v1';
+const MASTER_PW_KEY = 'model_master_pw_v1';
 const CURRICULUM_KEY = 'curriculum_v2';
 const LOCAL_ME = 'model_app_me';
 
 const TARGET_COHORTS = ['2025年入社', '2026年入社'];
+const DEFAULT_STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'KICHIJOJI', 'KAMAKURA'];   // GINZA U は GINZA と同じ扱い
+const NO_STORE = '（店舗なし）';
 
 const C = {
   bg:'#F7F4EE', card:'#FFFFFF', line:'#E5DCC8', text:'#1F1C18', mute:'#9C9486',
@@ -37,52 +43,64 @@ function fmtDate(ds) { if (!ds) return '―'; const [y,m,d] = ds.split('-'); ret
 function fmtMonth(ym) { if (!ym) return '―'; const [y,m] = ym.split('-'); return `${y}年${Number(m)}月`; }
 function yen(n) { return '¥' + Number(n || 0).toLocaleString('ja-JP'); }
 
-// 暗証番号はそのまま持たない。名前と混ぜた値だけ保存する（総当たりには弱いので、
-// 守っているのは「他人のページを覗かれない」程度。扱うのは材料費の記録だけ）
+// パスワードはそのまま持たない。名前と混ぜた値だけ保存する
 function hashPin(name, pin) {
   const s = 'nora-model|' + name + '|' + pin;
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  let g = 52711;
-  for (let i = s.length - 1; i >= 0; i--) g = ((g << 5) + g + s.charCodeAt(i)) >>> 0;
+  let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  let g = 52711; for (let i = s.length - 1; i >= 0; i--) g = ((g << 5) + g + s.charCodeAt(i)) >>> 0;
   return h.toString(36) + '-' + g.toString(36);
 }
-
-// 月の選択肢（記録のある月＋今月）
 function monthsOf(records) {
   const set = new Set(Object.values(records || {}).map(r => (r.date || '').slice(0, 7)).filter(Boolean));
   set.add(thisMonth());
   return [...set].sort().reverse();
 }
+const selStyle = { padding:'10px 12px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text, fontFamily:'inherit' };
 
 export default function ModelApp() {
-  const [menus, setMenus]     = useState([]);
+  const [stores, setStores]   = useState([]);
+  const [menus, setMenus]     = useState({});
   const [members, setMembers] = useState([]);
   const [records, setRecords] = useState({});
   const [signupPw, setSignupPw] = useState('');
-  const [adminPw, setAdminPw] = useState('');
+  const [masterPw, setMasterPw] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [err, setErr]         = useState('');
   const [meId, setMeId]       = useState(() => { try { return localStorage.getItem(LOCAL_ME) || ''; } catch (e) { return ''; } });
-  const [view, setView]       = useState('home');   // home | me | admin
+  const [view, setView]       = useState({ name:'stores' });   // stores | staff | me | admin
 
   useEffect(() => { (async () => {
-    try { const r = await window.storage.get(MENUS_KEY); setMenus(JSON.parse(r.value) || []); } catch (e) {}
     try { const r = await window.storage.get(RECORDS_KEY); setRecords(JSON.parse(r.value) || {}); } catch (e) {}
     try { const r = await window.storage.get(SIGNUP_PW_KEY); setSignupPw(r.value || ''); } catch (e) {}
-    try { const r = await window.storage.get(ADMIN_PW_KEY);  setAdminPw(r.value || ''); } catch (e) {}
+    try { const r = await window.storage.get(MASTER_PW_KEY); setMasterPw(r.value || ''); } catch (e) {}
+
+    let mn = null;
+    try { const r = await window.storage.get(MENUS_KEY); mn = JSON.parse(r.value); } catch (e) {}
+    if (Array.isArray(mn)) mn = {};          // 旧形式（全店共通の配列）は作り直す
+    setMenus(mn && typeof mn === 'object' ? mn : {});
+
     let ms = null;
     try { const r = await window.storage.get(MEMBERS_KEY); ms = JSON.parse(r.value); } catch (e) {}
     if (!Array.isArray(ms) || ms.length === 0) {
       ms = await seedMembers();
       if (ms) { try { await window.storage.set(MEMBERS_KEY, JSON.stringify(ms)); } catch (e) {} }
     }
-    setMembers(ms || []);
+    ms = ms || [];
+    setMembers(ms);
+
+    let st = null;
+    try { const r = await window.storage.get(STORES_KEY); st = JSON.parse(r.value); } catch (e) {}
+    if (!Array.isArray(st) || st.length === 0) {
+      const used = [...new Set(ms.map(m => m.store).filter(Boolean))];
+      const names = [...new Set([...DEFAULT_STORES, ...used])];
+      st = names.map(n => ({ name: n, pw: '' }));
+      try { await window.storage.set(STORES_KEY, JSON.stringify(st)); } catch (e) {}
+    }
+    setStores(st);
     setLoading(false);
   })(); }, []);
 
-  // 名簿はカリキュラムの2025・2026年入社から作る
   async function seedMembers() {
     try {
       const r = await window.storage.get(CURRICULUM_KEY);
@@ -93,7 +111,6 @@ export default function ModelApp() {
     } catch (e) { setErr('カリキュラムから名簿を取り込めませんでした'); return null; }
   }
 
-  // 記録は1件ずつマージして保存する（同時に入れても消し合わない）
   const saveRecord = useCallback(async (rec) => {
     setSaving(true);
     try {
@@ -125,16 +142,29 @@ export default function ModelApp() {
     setSaving(false);
   }, []);
 
-  const saveMenus = useCallback(async (next) => {
+  // メニューは店舗ごと。その店舗の分だけを読み直して差し替えるので、他店の編集を消さない
+  const saveMenusFor = useCallback(async (store, list) => {
     setSaving(true);
-    try { await window.storage.set(MENUS_KEY, JSON.stringify(next)); setMenus(next); }
-    catch (e) { setErr('メニューを保存できませんでした'); }
+    try {
+      let remote = {};
+      try { const r = await window.storage.get(MENUS_KEY); const v = JSON.parse(r.value); if (v && !Array.isArray(v)) remote = v; } catch (e) {}
+      const next = { ...remote, [store]: list };
+      await window.storage.set(MENUS_KEY, JSON.stringify(next));
+      setMenus(next);
+    } catch (e) { setErr('メニューを保存できませんでした'); }
+    setSaving(false);
+  }, []);
+
+  const saveStores = useCallback(async (next) => {
+    setSaving(true);
+    try { await window.storage.set(STORES_KEY, JSON.stringify(next)); setStores(next); }
+    catch (e) { setErr('店舗を保存できませんでした'); }
     setSaving(false);
   }, []);
 
   const me = members.find(m => m.id === meId) || null;
-  function signIn(id) { setMeId(id); try { localStorage.setItem(LOCAL_ME, id); } catch (e) {} setView('me'); }
-  function signOut() { setMeId(''); try { localStorage.removeItem(LOCAL_ME); } catch (e) {} setView('home'); }
+  function signIn(id) { setMeId(id); try { localStorage.setItem(LOCAL_ME, id); } catch (e) {} setView({ name:'me' }); }
+  function signOut() { setMeId(''); try { localStorage.removeItem(LOCAL_ME); } catch (e) {} setView({ name:'stores' }); }
 
   if (loading) return <Shell><div style={{ padding:'40px', textAlign:'center', color:C.mute }}>読み込み中…</div></Shell>;
 
@@ -146,34 +176,42 @@ export default function ModelApp() {
         </div>
       )}
 
-      {view === 'home' && (
-        <HomeView members={members} me={me} signupPw={signupPw}
-          onSignIn={signIn} onSaveMembers={saveMembers} onAdmin={() => setView('admin')} />
+      {view.name === 'stores' && (
+        <StorePickView stores={stores} members={members} me={me}
+          onPick={s => setView({ name:'staff', store:s })}
+          onMe={() => signIn(me.id)}
+          onAdmin={() => setView({ name:'admin' })} />
       )}
 
-      {view === 'me' && me && (
-        <MeView me={me} menus={menus} records={records} saving={saving}
-          onSave={saveRecord} onRemove={removeRecord} onBack={() => setView('home')} onSignOut={signOut} />
+      {view.name === 'staff' && (
+        <StaffPickView store={view.store} members={members} signupPw={signupPw}
+          onSignIn={signIn} onSaveMembers={saveMembers} onBack={() => setView({ name:'stores' })} />
       )}
 
-      {view === 'admin' && (
-        <AdminView members={members} menus={menus} records={records} adminPw={adminPw} saving={saving}
-          onSaveMenus={saveMenus} onSaveMembers={saveMembers}
-          onSavePasswords={async (signup, admin) => {
+      {view.name === 'me' && me && (
+        <MeView me={me} menus={menus[me.store] || []} records={records} saving={saving}
+          onSave={saveRecord} onRemove={removeRecord}
+          onBack={() => setView({ name:'stores' })} onSignOut={signOut} />
+      )}
+
+      {view.name === 'admin' && (
+        <AdminView stores={stores} members={members} menus={menus} records={records}
+          masterPw={masterPw} signupPw={signupPw} saving={saving}
+          onSaveMenusFor={saveMenusFor} onSaveMembers={saveMembers} onSaveStores={saveStores}
+          onSavePasswords={async (signup, master) => {
             try {
               await window.storage.set(SIGNUP_PW_KEY, signup);
-              await window.storage.set(ADMIN_PW_KEY, admin);
-              setSignupPw(signup); setAdminPw(admin);
+              await window.storage.set(MASTER_PW_KEY, master);
+              setSignupPw(signup); setMasterPw(master);
               return true;
             } catch (e) { setErr('パスワードを保存できませんでした'); return false; }
           }}
-          signupPw={signupPw}
           onSeed={async () => { const ms = await seedMembers(); if (!ms) return { added: 0 };
             const have = new Set(members.map(m => m.id));
             const add = ms.filter(m => !have.has(m.id));
             if (add.length) await saveMembers([...members, ...add]);
             return { added: add.length, names: add.map(a => a.name) }; }}
-          onBack={() => setView('home')} />
+          onBack={() => setView({ name:'stores' })} />
       )}
     </Shell>
   );
@@ -182,20 +220,74 @@ export default function ModelApp() {
 function Shell({ children }) {
   return (
     <div style={{ minHeight:'100vh', background:C.bg, padding:'20px 14px 60px' }}>
-      <div style={{ maxWidth:'820px', margin:'0 auto' }}>{children}</div>
+      <div style={{ maxWidth:'860px', margin:'0 auto' }}>{children}</div>
     </div>
   );
 }
 
-// ─── 入り口（名前を選んで暗証番号）─────────────────────────────
-function HomeView({ members, me, signupPw, onSignIn, onSaveMembers, onAdmin }) {
+function Stat({ label, value, big }) {
+  return (
+    <div style={{ flex:'1 1 120px', padding:'12px 14px', borderRadius:'12px', background:C.card, border:`1px solid ${C.line}` }}>
+      <div style={{ fontSize:'10px', color:C.mute, fontWeight:600 }}>{label}</div>
+      <div style={{ fontSize: big ? '22px' : '17px', fontWeight:700, color:C.text, marginTop:'3px' }}>{value}</div>
+    </div>
+  );
+}
+
+// ─── 最初のページ：店舗を選ぶ ───────────────────────────────────
+function StorePickView({ stores, members, me, onPick, onMe, onAdmin }) {
+  const countOf = s => members.filter(m => (m.store || '') === s).length;
+  const noStore = members.filter(m => !m.store);
+  return (
+    <>
+      <h1 style={{ fontSize:'21px', fontWeight:700, margin:'0 0 4px', color:C.text, letterSpacing:'0.02em' }}>モデル実績</h1>
+      <div style={{ fontSize:'13px', color:C.mute, marginBottom:'22px' }}>店舗を選んでください</div>
+
+      {me && (
+        <button onClick={onMe}
+          style={{ width:'100%', textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:'none', background:C.text, color:'#FFF', cursor:'pointer', marginBottom:'16px' }}>
+          <div style={{ fontSize:'11px', opacity:0.75, marginBottom:'3px' }}>前回のつづき</div>
+          <div style={{ fontSize:'16px', fontWeight:700 }}>{me.name} さんのページを開く</div>
+        </button>
+      )}
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:'10px', marginBottom:'16px' }}>
+        {stores.map(s => (
+          <button key={s.name} onClick={() => onPick(s.name)}
+            style={{ textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:`1px solid ${C.line}`, background:C.card, cursor:'pointer' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'15px', fontWeight:700, color:C.text }}>
+              <Store size={14} color={C.mute} /> {s.name}
+            </div>
+            <div style={{ fontSize:'11px', color:C.mute, marginTop:'5px' }}>{countOf(s.name)}名</div>
+          </button>
+        ))}
+        {noStore.length > 0 && (
+          <button onClick={() => onPick('')}
+            style={{ textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:`1px dashed ${C.line}`, background:'transparent', cursor:'pointer' }}>
+            <div style={{ fontSize:'15px', fontWeight:700, color:C.mute }}>{NO_STORE}</div>
+            <div style={{ fontSize:'11px', color:C.mute, marginTop:'5px' }}>{noStore.length}名</div>
+          </button>
+        )}
+      </div>
+
+      <button onClick={onAdmin}
+        style={{ display:'flex', alignItems:'center', gap:'6px', padding:'10px 16px', borderRadius:'10px', border:`1px solid ${C.line}`, background:C.card, color:C.mute, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+        <Lock size={13} /> 管理者
+      </button>
+    </>
+  );
+}
+
+// ─── スタッフを選ぶ → パスワード ────────────────────────────────
+function StaffPickView({ store, members, signupPw, onSignIn, onSaveMembers, onBack }) {
   const [picked, setPicked] = useState(null);
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [word, setWord] = useState('');
   const [msg, setMsg] = useState('');
 
-  const cohorts = [...new Set(members.map(m => m.cohort))].sort();
+  const list = members.filter(m => (m.store || '') === store);
+  const cohorts = [...new Set(list.map(m => m.cohort))].sort();
   const target = picked ? members.find(m => m.id === picked) : null;
   const isNew = target && !target.pin;
 
@@ -203,93 +295,90 @@ function HomeView({ members, me, signupPw, onSignIn, onSaveMembers, onAdmin }) {
 
   async function go() {
     if (!target) return;
-    if (!/^\d{4}$/.test(pin)) { setMsg('暗証番号は4桁の数字です'); return; }
+    if (!/^\d{4}$/.test(pin)) { setMsg('パスワードは4桁の数字です'); return; }
     if (isNew) {
       if (signupPw && word.trim() !== signupPw) { setMsg('合言葉が違います'); return; }
-      if (pin !== pin2) { setMsg('2回入れた暗証番号が違います'); return; }
+      if (pin !== pin2) { setMsg('2回入れたパスワードが違います'); return; }
       await onSaveMembers(members.map(m => m.id === target.id ? { ...m, pin: hashPin(m.name, pin) } : m));
       onSignIn(target.id);
     } else {
-      if (target.pin !== hashPin(target.name, pin)) { setMsg('暗証番号が違います'); return; }
+      if (target.pin !== hashPin(target.name, pin)) { setMsg('パスワードが違います'); return; }
       onSignIn(target.id);
     }
   }
 
   const inp = { width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${C.line}`,
     fontSize:'16px', boxSizing:'border-box', textAlign:'center', letterSpacing:'0.3em', fontFamily:'inherit' };
+  const lbl = { display:'block', fontSize:'12px', fontWeight:700, color:C.text, textAlign:'left', marginBottom:'5px' };
 
   return (
     <>
-      <h1 style={{ fontSize:'21px', fontWeight:700, margin:'0 0 4px', color:C.text, letterSpacing:'0.02em' }}>モデル実績</h1>
-      <div style={{ fontSize:'13px', color:C.mute, marginBottom:'22px' }}>営業後にやったモデルを記録します</div>
-
-      {me && (
-        <button onClick={() => onSignIn(me.id)}
-          style={{ width:'100%', textAlign:'left', padding:'16px 18px', borderRadius:'14px', border:'none', background:C.text, color:'#FFF', cursor:'pointer', marginBottom:'14px' }}>
-          <div style={{ fontSize:'11px', opacity:0.75, marginBottom:'3px' }}>前回のつづき</div>
-          <div style={{ fontSize:'16px', fontWeight:700 }}>{me.name} さんのページを開く</div>
-        </button>
-      )}
+      <button onClick={picked ? reset : onBack}
+        style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+        <ChevronLeft size={12} /> {picked ? '名前を選び直す' : '店舗を選び直す'}
+      </button>
+      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 18px', color:C.text }}>{store || NO_STORE}</h1>
 
       {!picked ? (
-        <>
-          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'8px' }}>
-            {me ? '別の人として入る' : '自分の名前を選んでください'}
+        list.length === 0 ? (
+          <div style={{ padding:'40px 20px', textAlign:'center', color:C.mute, background:C.card, borderRadius:'12px', border:`1px solid ${C.line}` }}>
+            この店舗にはまだスタッフが登録されていません。
           </div>
-          {cohorts.map(c => (
-            <div key={c} style={{ marginBottom:'14px' }}>
-              <div style={{ fontSize:'11px', color:C.mute, fontWeight:700, marginBottom:'6px' }}>{c}</div>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
-                {members.filter(m => m.cohort === c).map(m => (
-                  <button key={m.id} onClick={() => { reset(); setPicked(m.id); }}
-                    style={{ padding:'9px 14px', borderRadius:'10px', border:`1px solid ${C.line}`,
-                      background:C.card, color:C.text, fontSize:'13px', cursor:'pointer',
-                      fontWeight: m.pin ? 600 : 500 }}>
-                    {m.name}
-                    {!m.pin && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'5px' }}>未登録</span>}
-                  </button>
-                ))}
-              </div>
+        ) : cohorts.map(c => (
+          <div key={c} style={{ marginBottom:'14px' }}>
+            <div style={{ fontSize:'11px', color:C.mute, fontWeight:700, marginBottom:'6px' }}>{c}</div>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+              {list.filter(m => m.cohort === c).map(m => (
+                <button key={m.id} onClick={() => { reset(); setPicked(m.id); }}
+                  style={{ padding:'10px 15px', borderRadius:'10px', border:`1px solid ${C.line}`,
+                    background:C.card, color:C.text, fontSize:'13px', cursor:'pointer', fontWeight: m.pin ? 600 : 500 }}>
+                  {m.name}
+                  {!m.pin && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'5px' }}>未登録</span>}
+                </button>
+              ))}
             </div>
-          ))}
-          <button onClick={onAdmin}
-            style={{ display:'flex', alignItems:'center', gap:'6px', marginTop:'10px', padding:'10px 16px', borderRadius:'10px', border:`1px solid ${C.line}`, background:C.card, color:C.mute, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            <Lock size={13} /> 管理者
-          </button>
-        </>
+          </div>
+        ))
       ) : (
-        <div style={{ maxWidth:'340px', margin:'0 auto', textAlign:'center' }}>
-          <div style={{ fontSize:'17px', fontWeight:700, color:C.text, marginBottom:'4px' }}>{target.name} さん</div>
-          <div style={{ fontSize:'12px', color:C.mute, marginBottom:'18px', lineHeight:1.8 }}>
+        <div style={{ maxWidth:'340px', margin:'0 auto' }}>
+          <div style={{ fontSize:'17px', fontWeight:700, color:C.text, marginBottom:'4px', textAlign:'center' }}>{target.name} さん</div>
+          <div style={{ fontSize:'12px', color:C.mute, marginBottom:'18px', lineHeight:1.8, textAlign:'center' }}>
             {isNew
-              ? <>はじめてなので、<b style={{ color:C.text }}>自分で4桁の暗証番号</b>を決めてください。<br />次から同じ番号で入ります。</>
-              : <>暗証番号を入れてください。</>}
+              ? <>はじめてなので、<b style={{ color:C.text }}>自分で4桁のパスワード</b>を決めてください。<br />次から同じ番号で入ります。</>
+              : <>パスワードを入れてください。</>}
           </div>
 
           {isNew && signupPw && (
-            <input value={word} onChange={e => { setWord(e.target.value); setMsg(''); }}
-              placeholder="合言葉" style={{ ...inp, letterSpacing:'normal', marginBottom:'10px' }} />
+            <div style={{ marginBottom:'12px' }}>
+              <label style={lbl}>合言葉</label>
+              <input value={word} onChange={e => { setWord(e.target.value); setMsg(''); }}
+                style={{ ...inp, letterSpacing:'normal' }} />
+            </div>
           )}
-          <input type="password" inputMode="numeric" maxLength={4} value={pin} autoFocus
-            onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setMsg(''); }}
-            onKeyDown={e => e.key === 'Enter' && !isNew && go()}
-            placeholder="••••" style={inp} />
+
+          <div style={{ marginBottom:'12px' }}>
+            <label style={lbl}>パスワード<span style={{ fontWeight:500, color:C.mute, marginLeft:'6px' }}>4桁の数字</span></label>
+            <input type="password" inputMode="numeric" maxLength={4} value={pin} autoFocus
+              onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setMsg(''); }}
+              onKeyDown={e => e.key === 'Enter' && !isNew && go()} style={inp} />
+          </div>
+
           {isNew && (
-            <input type="password" inputMode="numeric" maxLength={4} value={pin2}
-              onChange={e => { setPin2(e.target.value.replace(/\D/g, '')); setMsg(''); }}
-              onKeyDown={e => e.key === 'Enter' && go()}
-              placeholder="もう一度" style={{ ...inp, marginTop:'10px' }} />
+            <div style={{ marginBottom:'12px' }}>
+              <label style={lbl}>パスワード再入力</label>
+              <input type="password" inputMode="numeric" maxLength={4} value={pin2}
+                onChange={e => { setPin2(e.target.value.replace(/\D/g, '')); setMsg(''); }}
+                onKeyDown={e => e.key === 'Enter' && go()} style={inp} />
+            </div>
           )}
-          {msg && <div style={{ fontSize:'12px', color:C.ng, marginTop:'8px' }}>{msg}</div>}
+
+          {msg && <div style={{ fontSize:'12px', color:C.ng, marginBottom:'8px', textAlign:'center' }}>{msg}</div>}
           <button onClick={go}
-            style={{ width:'100%', marginTop:'12px', padding:'13px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'14px', fontWeight:700, cursor:'pointer' }}>
+            style={{ width:'100%', padding:'13px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'14px', fontWeight:700, cursor:'pointer' }}>
             {isNew ? '登録して始める' : '開く'}
           </button>
-          <button onClick={reset} style={{ marginTop:'10px', background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline' }}>
-            名前を選び直す
-          </button>
           {!isNew && (
-            <div style={{ fontSize:'11px', color:C.mute, marginTop:'14px', lineHeight:1.7 }}>
+            <div style={{ fontSize:'11px', color:C.mute, marginTop:'14px', lineHeight:1.7, textAlign:'center' }}>
               忘れたときは管理者に言ってください。いったん解除すれば、もう一度決め直せます。
             </div>
           )}
@@ -302,7 +391,7 @@ function HomeView({ members, me, signupPw, onSignIn, onSaveMembers, onAdmin }) {
 // ─── 本人のページ ───────────────────────────────────────────────
 function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOut }) {
   const [ym, setYm] = useState(thisMonth());
-  const [editing, setEditing] = useState(null);   // 入力中の記録
+  const [editing, setEditing] = useState(null);
 
   const mine = useMemo(() => Object.values(records)
     .filter(r => r.memberId === me.id)
@@ -310,19 +399,21 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
   const months = monthsOf(Object.fromEntries(mine.map(r => [r.id, r])));
   const list = mine.filter(r => (r.date || '').startsWith(ym));
   const cost = list.reduce((n, r) => n + (r.cost || 0), 0);
-  const menuById = Object.fromEntries(menus.map(m => [m.id, m]));
+  const menuById = Object.fromEntries((menus || []).map(m => [m.id, m]));
 
-  function startNew() { setEditing({ id: uid(), memberId: me.id, date: today(), menuIds: [], cost: 0, createdAt: new Date().toISOString() }); }
+  function startNew() {
+    setEditing({ id: uid(), memberId: me.id, store: me.store || '', date: today(), menuIds: [], cost: 0, createdAt: new Date().toISOString() });
+  }
 
   return (
     <>
       <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px', flexWrap:'wrap', marginBottom:'16px' }}>
         <div>
           <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
-            <ChevronLeft size={12} /> 入り口に戻る
+            <ChevronLeft size={12} /> 店舗選択に戻る
           </button>
           <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text }}>{me.name} さん</h1>
-          <div style={{ fontSize:'12px', color:C.mute, marginTop:'2px' }}>{saving ? '保存中…' : 'モデル実績'}</div>
+          <div style={{ fontSize:'12px', color:C.mute, marginTop:'2px' }}>{saving ? '保存中…' : (me.store || NO_STORE)}</div>
         </div>
         {!editing && (
           <button onClick={startNew}
@@ -334,14 +425,16 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
 
       {editing ? (
         <RecordForm rec={editing} menus={menus} saving={saving}
+          onDelete={editing.updatedAt ? async () => {
+            if (!confirm(`${fmtDate(editing.date)}の記録を消します。よろしいですか。`)) return;
+            await onRemove(editing.id); setEditing(null);
+          } : null}
           onCancel={() => setEditing(null)}
           onSave={async r => { await onSave(r); setEditing(null); setYm((r.date || '').slice(0, 7)); }} />
       ) : (<>
-        <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'12px', flexWrap:'wrap' }}>
-          <select value={ym} onChange={e => setYm(e.target.value)} style={selStyle}>
-            {months.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
-          </select>
-        </div>
+        <select value={ym} onChange={e => setYm(e.target.value)} style={{ ...selStyle, marginBottom:'12px' }}>
+          {months.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
+        </select>
 
         <div style={{ display:'flex', gap:'8px', marginBottom:'14px' }}>
           <Stat label="やった人数" value={list.length + '人'} big />
@@ -361,11 +454,11 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
                   <div style={{ fontSize:'13px', fontWeight:700, color:C.text }}>{fmtDate(r.date)}</div>
                   <div style={{ fontSize:'12px', color:C.mute, marginTop:'4px', lineHeight:1.6 }}>
                     {(r.menuIds || []).length === 0 ? 'メニューなし'
-                      : (r.menuIds || []).map(id => (menuById[id] || {}).name || '（削除されたメニュー）').join('／')}
+                      : (r.menuIds || []).map(id => (menuById[id] || {}).name || '（消されたメニュー）').join('／')}
                   </div>
                 </div>
                 <div style={{ fontSize:'13px', fontWeight:700, color:C.text, whiteSpace:'nowrap' }}>{yen(r.cost)}</div>
-                <button onClick={() => setEditing(r)} title="直す"
+                <button onClick={() => setEditing(r)}
                   style={{ flexShrink:0, padding:'7px 12px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
                   直す
                 </button>
@@ -383,18 +476,17 @@ function MeView({ me, menus, records, saving, onSave, onRemove, onBack, onSignOu
   );
 }
 
-function RecordForm({ rec, menus, saving, onCancel, onSave }) {
+function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
   const [date, setDate] = useState(rec.date || today());
   const [picked, setPicked] = useState(rec.menuIds || []);
-  const cost = picked.reduce((n, id) => n + ((menus.find(m => m.id === id) || {}).cost || 0), 0);
+  const cost = picked.reduce((n, id) => n + (((menus || []).find(m => m.id === id) || {}).cost || 0), 0);
   const byCat = [];
-  menus.forEach(m => {
+  (menus || []).forEach(m => {
     const cat = m.category || 'メニュー';
     let g = byCat.find(x => x.cat === cat);
     if (!g) { g = { cat, items: [] }; byCat.push(g); }
     g.items.push(m);
   });
-
   function toggle(id) { setPicked(p => p.indexOf(id) >= 0 ? p.filter(x => x !== id) : [...p, id]); }
 
   return (
@@ -408,9 +500,9 @@ function RecordForm({ rec, menus, saving, onCancel, onSave }) {
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'12px' }}>
         <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'2px' }}>メニュー</div>
         <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px' }}>やったものを全部押してください。材料費は自動で足されます。</div>
-        {menus.length === 0 ? (
+        {(menus || []).length === 0 ? (
           <div style={{ fontSize:'12px', color:C.ng, lineHeight:1.7 }}>
-            メニューがまだ登録されていません。管理者に登録してもらってください。
+            この店舗のメニューがまだ登録されていません。管理者に登録してもらってください。
           </div>
         ) : byCat.map(g => (
           <div key={g.cat} style={{ marginBottom:'10px' }}>
@@ -439,14 +531,20 @@ function RecordForm({ rec, menus, saving, onCancel, onSave }) {
         <span style={{ fontSize:'18px', fontWeight:700, color:C.text }}>{yen(cost)}</span>
       </div>
 
-      <div style={{ display:'flex', gap:'8px' }}>
+      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
         <button onClick={onCancel}
           style={{ padding:'12px 20px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.mute, fontSize:'13px', fontWeight:600, cursor:'pointer' }}>
           やめる
         </button>
+        {onDelete && (
+          <button onClick={onDelete}
+            style={{ padding:'12px 16px', borderRadius:'10px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, fontSize:'13px', fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', gap:'5px' }}>
+            <Trash2 size={14} /> 消す
+          </button>
+        )}
         <button onClick={() => onSave({ ...rec, date, menuIds: picked, cost, updatedAt: new Date().toISOString() })}
           disabled={saving || picked.length === 0}
-          style={{ flex:1, padding:'12px 20px', borderRadius:'10px', border:'none',
+          style={{ flex:1, minWidth:'120px', padding:'12px 20px', borderRadius:'10px', border:'none',
             background: picked.length === 0 ? '#D8D2C6' : C.text, color:'#FFF', fontSize:'13px', fontWeight:700,
             cursor: picked.length === 0 ? 'default' : 'pointer' }}>
           {saving ? '保存中…' : '保存する'}
@@ -456,68 +554,104 @@ function RecordForm({ rec, menus, saving, onCancel, onSave }) {
   );
 }
 
-function Stat({ label, value, big }) {
-  return (
-    <div style={{ flex:'1 1 120px', padding:'12px 14px', borderRadius:'12px', background:C.card, border:`1px solid ${C.line}` }}>
-      <div style={{ fontSize:'10px', color:C.mute, fontWeight:600 }}>{label}</div>
-      <div style={{ fontSize: big ? '22px' : '17px', fontWeight:700, color:C.text, marginTop:'3px' }}>{value}</div>
-    </div>
-  );
-}
-const selStyle = { padding:'10px 12px', borderRadius:'9px', border:`1px solid ${C.line}`, fontSize:'13px', background:'#FFF', color:C.text, fontFamily:'inherit' };
-
-// ─── 管理者（閲覧と集計。記録は直さない）────────────────────────
-function AdminView({ members, menus, records, adminPw, saving, onSaveMenus, onSaveMembers, onSavePasswords, signupPw, onSeed, onBack }) {
-  const [ok, setOk] = useState(() => { try { return sessionStorage.getItem('model_admin') === '1'; } catch (e) { return false; } });
+// ─── 管理者 ─────────────────────────────────────────────────────
+// 総管理者は全店。店舗管理者は自分の店舗だけ。
+function AdminView({ stores, members, menus, records, masterPw, signupPw, saving,
+  onSaveMenusFor, onSaveMembers, onSaveStores, onSavePasswords, onSeed, onBack }) {
+  const [scope, setScope] = useState(() => {
+    try { const v = JSON.parse(sessionStorage.getItem('model_admin_scope') || 'null'); return v; } catch (e) { return null; }
+  });
   const [pw, setPw] = useState('');
-  const [tab, setTab] = useState('rank');   // rank | menus | members
+  const [msg, setMsg] = useState('');
+  const [tab, setTab] = useState('rank');
   const [ym, setYm] = useState(thisMonth());
+  const [pickStore, setPickStore] = useState('');   // 総管理者が見る店舗（空＝全店）
 
-  if (!ok && adminPw) {
+  function tryOpen() {
+    const v = pw.trim();
+    if (masterPw && v === masterPw) { grant({ kind:'master' }); return; }
+    const hit = stores.find(s => s.pw && s.pw === v);
+    if (hit) { grant({ kind:'store', store: hit.name }); return; }
+    if (!masterPw && !v) { grant({ kind:'master' }); return; }   // 未設定のうちは素通り
+    setMsg('パスワードが違います');
+  }
+  function grant(sc) { setScope(sc); try { sessionStorage.setItem('model_admin_scope', JSON.stringify(sc)); } catch (e) {} }
+
+  if (!scope) {
+    const open = !masterPw && stores.every(s => !s.pw);
     return (
       <div style={{ maxWidth:'340px', margin:'36px auto', textAlign:'center' }}>
         <Lock size={22} color={C.mute} style={{ marginBottom:'10px' }} />
-        <div style={{ fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'16px' }}>管理者のパスワード</div>
-        <input type="password" value={pw} autoFocus onChange={e => setPw(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && pw === adminPw) { setOk(true); try { sessionStorage.setItem('model_admin','1'); } catch (x) {} } }}
-          style={{ width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${C.line}`, fontSize:'14px', boxSizing:'border-box', textAlign:'center' }} />
-        <button onClick={() => { if (pw === adminPw) { setOk(true); try { sessionStorage.setItem('model_admin','1'); } catch (x) {} } else alert('パスワードが違います'); }}
+        <div style={{ fontSize:'15px', fontWeight:700, color:C.text, marginBottom:'6px' }}>管理者のパスワード</div>
+        <div style={{ fontSize:'11px', color:C.mute, marginBottom:'16px', lineHeight:1.7 }}>
+          {open ? 'まだ設定されていないので、そのまま開けます。' : '総管理者は全店、店舗のパスワードはその店舗だけが見られます。'}
+        </div>
+        <input type="password" value={pw} autoFocus onChange={e => { setPw(e.target.value); setMsg(''); }}
+          onKeyDown={e => e.key === 'Enter' && tryOpen()}
+          style={{ width:'100%', padding:'12px 14px', borderRadius:'10px', border:`1px solid ${msg ? C.ng : C.line}`, fontSize:'14px', boxSizing:'border-box', textAlign:'center' }} />
+        {msg && <div style={{ fontSize:'12px', color:C.ng, marginTop:'8px' }}>{msg}</div>}
+        <button onClick={tryOpen}
           style={{ width:'100%', marginTop:'12px', padding:'12px', borderRadius:'10px', border:'none', background:C.text, color:'#FFF', fontSize:'13px', fontWeight:700, cursor:'pointer' }}>開く</button>
         <button onClick={onBack} style={{ marginTop:'10px', background:'none', border:'none', color:C.mute, fontSize:'12px', cursor:'pointer', textDecoration:'underline' }}>戻る</button>
       </div>
     );
   }
 
+  const isMaster = scope.kind === 'master';
+  const viewStore = isMaster ? pickStore : scope.store;     // '' = 全店
+  const inScope = m => !viewStore || (m.store || '') === viewStore;
+  const scopedMembers = members.filter(inScope);
+  const scopedIds = new Set(scopedMembers.map(m => m.id));
+
   const months = monthsOf(records);
-  const inMonth = Object.values(records).filter(r => (r.date || '').startsWith(ym));
+  const inMonth = Object.values(records).filter(r => (r.date || '').startsWith(ym) && scopedIds.has(r.memberId));
   const byMember = {};
-  inMonth.forEach(r => {
-    const x = byMember[r.memberId] || (byMember[r.memberId] = { n: 0, cost: 0 });
-    x.n += 1; x.cost += (r.cost || 0);
-  });
-  const rank = members.map(m => ({ ...m, ...(byMember[m.id] || { n: 0, cost: 0 }) }))
+  inMonth.forEach(r => { const x = byMember[r.memberId] || (byMember[r.memberId] = { n:0, cost:0 }); x.n += 1; x.cost += (r.cost || 0); });
+  const rank = scopedMembers.map(m => ({ ...m, ...(byMember[m.id] || { n:0, cost:0 }) }))
     .sort((a, b) => b.n - a.n || b.cost - a.cost || a.name.localeCompare(b.name, 'ja'));
   const done = rank.filter(r => r.n > 0);
   const totalCost = inMonth.reduce((n, r) => n + (r.cost || 0), 0);
 
-  // メニュー別
+  // メニュー別（店舗ごとに表が違うので、記録の店舗の表から名前を引く）
   const menuCount = {};
-  inMonth.forEach(r => (r.menuIds || []).forEach(id => { menuCount[id] = (menuCount[id] || 0) + 1; }));
-  const menuRows = menus.map(m => ({ ...m, n: menuCount[m.id] || 0 }))
-    .sort((a, b) => b.n - a.n).filter(m => m.n > 0);
+  inMonth.forEach(r => (r.menuIds || []).forEach(id => {
+    const st = r.store || (members.find(m => m.id === r.memberId) || {}).store || '';
+    const mm = (menus[st] || []).find(x => x.id === id);
+    const key = (mm ? mm.name : '（消されたメニュー）') + '|' + st;
+    const e = menuCount[key] || (menuCount[key] = { name: mm ? mm.name : '（消されたメニュー）', store: st, n:0, cost:0 });
+    e.n += 1; e.cost += (mm ? (mm.cost || 0) : 0);
+  }));
+  const menuRows = Object.values(menuCount).sort((a, b) => b.n - a.n);
 
   const th = { padding:'8px 10px', fontSize:'11px', fontWeight:700, color:C.mute, textAlign:'left', whiteSpace:'nowrap' };
   const td = { padding:'8px 10px', fontSize:'12px', color:C.text, whiteSpace:'nowrap' };
 
   return (
     <>
-      <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
-        <ChevronLeft size={12} /> 入り口に戻る
-      </button>
-      <h1 style={{ fontSize:'20px', fontWeight:700, margin:'0 0 14px', color:C.text }}>管理者</h1>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
+        <div>
+          <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'11px', color:C.mute, background:'none', border:'none', padding:0, cursor:'pointer', marginBottom:'4px' }}>
+            <ChevronLeft size={12} /> 店舗選択に戻る
+          </button>
+          <h1 style={{ fontSize:'20px', fontWeight:700, margin:0, color:C.text }}>
+            管理者
+            <span style={{ fontSize:'11px', fontWeight:700, padding:'3px 9px', borderRadius:'999px', marginLeft:'10px',
+              background: isMaster ? C.okBg : C.soft, color: isMaster ? C.ok : C.mute }}>
+              {isMaster ? '総管理者・全店' : scope.store}
+            </span>
+          </h1>
+        </div>
+        {isMaster && (
+          <select value={pickStore} onChange={e => setPickStore(e.target.value)} style={selStyle}>
+            <option value="">全店</option>
+            {stores.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+          </select>
+        )}
+      </div>
 
       <div style={{ display:'flex', gap:'4px', background:C.soft, borderRadius:'10px', padding:'4px', marginBottom:'16px', width:'fit-content', flexWrap:'wrap' }}>
-        {[{ k:'rank', l:'集計', i:BarChart2 }, { k:'menus', l:'メニューと材料費', i:Calendar }, { k:'members', l:'名簿', i:Users }].map(({ k, l, i:Icon }) => (
+        {[{ k:'rank', l:'集計', i:BarChart2 }, { k:'menus', l:'メニューと材料費', i:Calendar }, { k:'members', l:'名簿', i:Users }]
+          .concat(isMaster ? [{ k:'stores', l:'店舗とパスワード', i:Store }] : []).map(({ k, l, i:Icon }) => (
           <button key={k} onClick={() => setTab(k)}
             style={{ display:'flex', alignItems:'center', gap:'6px', padding:'8px 14px', borderRadius:'8px', border:'none',
               background: tab === k ? '#FFF' : 'transparent', color: tab === k ? C.text : C.mute,
@@ -534,13 +668,16 @@ function AdminView({ members, menus, records, adminPw, saving, onSaveMenus, onSa
 
         <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
           <Stat label="のべ人数" value={inMonth.length + '人'} big />
-          <Stat label="やった人" value={done.length + '／' + members.length + '名'} />
+          <Stat label="やった人" value={done.length + '／' + scopedMembers.length + '名'} />
           <Stat label="材料費の合計" value={yen(totalCost)} />
         </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
           <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
-            {fmtMonth(ym)}のランキング<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>やった人数順</span>
+            {fmtMonth(ym)}のランキング
+            <span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>
+              やった人数順・{viewStore || '全店'}
+            </span>
           </div>
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse' }}>
@@ -572,28 +709,41 @@ function AdminView({ members, menus, records, adminPw, saving, onSaveMenus, onSa
         {menuRows.length > 0 && (
           <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px' }}>
             <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>メニュー別</div>
-            {menuRows.map(m => (
-              <div key={m.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', padding:'5px 0', borderTop:'1px solid #F7F4EE' }}>
-                <span>{m.name}</span>
-                <span style={{ color:C.mute }}>{m.n}件　{yen(m.n * (m.cost || 0))}</span>
+            {menuRows.map((m, i) => (
+              <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', padding:'5px 0', borderTop: i === 0 ? 'none' : '1px solid #F7F4EE' }}>
+                <span>{m.name}{!viewStore && <span style={{ fontSize:'10px', color:C.mute, marginLeft:'6px' }}>{m.store}</span>}</span>
+                <span style={{ color:C.mute }}>{m.n}件　{yen(m.cost)}</span>
               </div>
             ))}
           </div>
         )}
       </>)}
 
-      {tab === 'menus' && <MenuEditor menus={menus} onSave={onSaveMenus} saving={saving} />}
+      {tab === 'menus' && (
+        viewStore
+          ? <MenuEditor key={viewStore} store={viewStore} menus={menus[viewStore] || []} saving={saving}
+              onSave={list => onSaveMenusFor(viewStore, list)} />
+          : <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'20px', fontSize:'12px', color:C.mute, lineHeight:1.8 }}>
+              メニューと材料費は店舗ごとです。上の店舗を選んでください。
+            </div>
+      )}
 
       {tab === 'members' && (
-        <MemberAdmin members={members} records={records} onSave={onSaveMembers} onSeed={onSeed} saving={saving}
-          signupPw={signupPw} adminPw={adminPw} onSavePasswords={onSavePasswords} />
+        <MemberAdmin members={scopedMembers} allMembers={members} stores={stores} records={records}
+          isMaster={isMaster} saving={saving} onSave={onSaveMembers} onSeed={onSeed} />
+      )}
+
+      {tab === 'stores' && isMaster && (
+        <StoreAdmin stores={stores} members={members} saving={saving}
+          onSave={onSaveStores} onSaveMembers={onSaveMembers}
+          signupPw={signupPw} masterPw={masterPw} onSavePasswords={onSavePasswords} />
       )}
     </>
   );
 }
 
-// ─── メニューと材料費 ───────────────────────────────────────────
-function MenuEditor({ menus, onSave, saving }) {
+// ─── メニューと材料費（店舗ごと）────────────────────────────────
+function MenuEditor({ store, menus, onSave, saving }) {
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(menus || [])));
   const [name, setName] = useState('');
   const [cost, setCost] = useState('');
@@ -604,7 +754,7 @@ function MenuEditor({ menus, onSave, saving }) {
 
   function set(id, patch) { setDraft(d => d.map(m => m.id === id ? { ...m, ...patch } : m)); }
   function del(m) {
-    if (!confirm(`「${m.name}」を消します。すでに記録に使われている分は、その記録に残った金額のままになります。よろしいですか。`)) return;
+    if (!confirm(`「${m.name}」を消します。すでに記録に使われている分は、その記録に残った金額のままです。よろしいですか。`)) return;
     setDraft(d => d.filter(x => x.id !== m.id));
   }
   function add() {
@@ -627,18 +777,16 @@ function MenuEditor({ menus, onSave, saving }) {
   return (
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
-        ここで登録したメニューが、本人の記録画面に出ます。材料費はメニューごとの固定額です。<br />
-        並べ替えは左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をつかんでドラッグしてください。区分を入れるとまとまって表示されます。
+        <b style={{ color:C.text }}>{store}</b> のメニューです。ここで登録したものが、この店舗のスタッフの記録画面に出ます。<br />
+        材料費はメニューごとの固定額。並べ替えは左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をドラッグ。区分を入れるとまとまって表示されます。
       </div>
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
         <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
-          メニュー<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.length}件</span>
+          {store}<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.length}件</span>
         </div>
         {draft.length === 0 && (
-          <div style={{ padding:'24px 14px', textAlign:'center', fontSize:'12px', color:C.mute }}>
-            まだ1件もありません。下から足してください。
-          </div>
+          <div style={{ padding:'24px 14px', textAlign:'center', fontSize:'12px', color:C.mute }}>まだ1件もありません。下から足してください。</div>
         )}
         {draft.map(m => (
           <div key={m.id}
@@ -654,13 +802,13 @@ function MenuEditor({ menus, onSave, saving }) {
               <GripVertical size={15} />
             </span>
             <input value={m.category || ''} onChange={e => set(m.id, { category: e.target.value })} placeholder="区分"
-              style={{ flex:'0 0 90px', minWidth:0, padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
+              style={{ flex:'0 0 88px', minWidth:0, padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
             <input value={m.name} onChange={e => set(m.id, { name: e.target.value })}
               style={{ flex:'1 1 100px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
             <div style={{ display:'flex', alignItems:'center', gap:'3px', flexShrink:0 }}>
               <span style={{ fontSize:'12px', color:C.mute }}>¥</span>
               <input value={m.cost} inputMode="numeric" onChange={e => set(m.id, { cost: Number(e.target.value.replace(/\D/g, '')) || 0 })}
-                style={{ width:'74px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
+                style={{ width:'72px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
             </div>
             <button onClick={() => del(m)} title="削除"
               style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -670,11 +818,11 @@ function MenuEditor({ menus, onSave, saving }) {
         ))}
         <div style={{ display:'flex', alignItems:'center', gap:'7px', padding:'11px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5', flexWrap:'wrap' }}>
           <input value={cat} onChange={e => setCat(e.target.value)} placeholder="区分"
-            style={{ flex:'0 0 90px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
+            style={{ flex:'0 0 88px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
           <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="メニュー名"
             style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
           <input value={cost} inputMode="numeric" onChange={e => setCost(e.target.value.replace(/\D/g, ''))} onKeyDown={e => e.key === 'Enter' && add()} placeholder="材料費"
-            style={{ width:'84px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
+            style={{ width:'82px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
           <button onClick={add}
             style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
             <Plus size={13} /> 追加
@@ -687,36 +835,47 @@ function MenuEditor({ menus, onSave, saving }) {
   );
 }
 
-// ─── 名簿とパスワード ───────────────────────────────────────────
-function MemberAdmin({ members, records, onSave, onSeed, saving, signupPw, adminPw, onSavePasswords }) {
+// ─── 名簿 ───────────────────────────────────────────────────────
+function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, onSave, onSeed }) {
   const [impMsg, setImpMsg] = useState('');
-  const [pw1, setPw1] = useState(signupPw || '');
-  const [pw2, setPw2] = useState(adminPw || '');
-  const [pwMsg, setPwMsg] = useState('');
   const used = {};
   Object.values(records || {}).forEach(r => { used[r.memberId] = (used[r.memberId] || 0) + 1; });
 
   function resetPin(m) {
-    if (!confirm(`${m.name}さんの暗証番号を解除します。本人が次に開いたとき、新しい番号を決め直せます。`)) return;
-    onSave(members.map(x => x.id === m.id ? { ...x, pin: null } : x));
+    if (!confirm(`${m.name}さんのパスワードを解除します。本人が次に開いたとき、新しいパスワードを決め直せます。`)) return;
+    onSave(allMembers.map(x => x.id === m.id ? { ...x, pin: null } : x));
   }
+  function setStore(m, store) { onSave(allMembers.map(x => x.id === m.id ? { ...x, store } : x)); }
   function remove(m) {
     const n = used[m.id] || 0;
     if (!confirm(n > 0 ? `${m.name}さんを名簿から外します。記録${n}件はそのまま残ります。` : `${m.name}さんを名簿から外します。`)) return;
-    onSave(members.filter(x => x.id !== m.id));
+    onSave(allMembers.filter(x => x.id !== m.id));
   }
 
   const cohorts = [...new Set(members.map(m => m.cohort))].sort();
 
   return (
     <>
-      <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
-        <button onClick={async () => { const r = await onSeed(); setImpMsg(r.added > 0 ? `${r.added}名を追加しました：${r.names.join('、')}` : '新しく追加する人はいませんでした'); }}
-          style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-          <Plus size={13} /> カリキュラムから取り込む（2025・2026年入社）
-        </button>
-        {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
-      </div>
+      {isMaster && (
+        <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
+          <button onClick={async () => { const r = await onSeed(); setImpMsg(r.added > 0 ? `${r.added}名を追加しました：${r.names.join('、')}` : '新しく追加する人はいませんでした'); }}
+            style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Plus size={13} /> カリキュラムから取り込む（2025・2026年入社）
+          </button>
+          {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
+        </div>
+      )}
+      {!isMaster && (
+        <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
+          この店舗のスタッフです。店舗の移動や名簿の追加は総管理者が行います。
+        </div>
+      )}
+
+      {members.length === 0 && (
+        <div style={{ padding:'30px', textAlign:'center', color:C.mute, background:C.card, borderRadius:'12px', border:`1px solid ${C.line}`, fontSize:'12px' }}>
+          スタッフがいません。
+        </div>
+      )}
 
       {cohorts.map(c => (
         <div key={c} style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'12px' }}>
@@ -724,42 +883,118 @@ function MemberAdmin({ members, records, onSave, onSeed, saving, signupPw, admin
             {c}<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{members.filter(m => m.cohort === c).length}名</span>
           </div>
           {members.filter(m => m.cohort === c).map(m => (
-            <div key={m.id} style={{ display:'flex', alignItems:'center', gap:'9px', padding:'9px 14px', borderTop:'1px solid #F7F4EE' }}>
-              <span style={{ flex:1, minWidth:0, fontSize:'13px', fontWeight:600 }}>{m.name}</span>
-              <span style={{ fontSize:'11px', color:C.mute }}>{m.store || '―'}</span>
+            <div key={m.id} style={{ display:'flex', alignItems:'center', gap:'9px', padding:'9px 14px', borderTop:'1px solid #F7F4EE', flexWrap:'wrap' }}>
+              <span style={{ flex:'1 1 90px', minWidth:0, fontSize:'13px', fontWeight:600 }}>{m.name}</span>
+              {isMaster ? (
+                <select value={m.store || ''} onChange={e => setStore(m, e.target.value)} style={{ ...selStyle, flex:'0 0 128px', padding:'7px 6px', fontSize:'12px' }}>
+                  <option value="">店舗なし</option>
+                  {stores.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                </select>
+              ) : <span style={{ fontSize:'11px', color:C.mute }}>{m.store || '―'}</span>}
               <span style={{ fontSize:'10px', fontWeight:700, padding:'2px 8px', borderRadius:'999px',
                 background: m.pin ? C.okBg : C.soft, color: m.pin ? C.ok : C.mute }}>
                 {m.pin ? '登録済' : '未登録'}
               </span>
-              <span style={{ fontSize:'11px', color:C.mute, width:'46px', textAlign:'right' }}>{used[m.id] || 0}件</span>
+              <span style={{ fontSize:'11px', color:C.mute, width:'44px', textAlign:'right' }}>{used[m.id] || 0}件</span>
               {m.pin && (
                 <button onClick={() => resetPin(m)}
                   style={{ flexShrink:0, padding:'6px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'11px', fontWeight:600, cursor:'pointer' }}>
-                  番号を解除
+                  パスワード解除
                 </button>
               )}
-              <button onClick={() => remove(m)} title="名簿から外す"
-                style={{ flexShrink:0, width:'30px', height:'30px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                <X size={13} />
-              </button>
+              {isMaster && (
+                <button onClick={() => remove(m)} title="名簿から外す"
+                  style={{ flexShrink:0, width:'30px', height:'30px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <X size={13} />
+                </button>
+              )}
             </div>
           ))}
         </div>
       ))}
+    </>
+  );
+}
 
-      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px' }}>
+// ─── 店舗とパスワード（総管理者のみ）────────────────────────────
+function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, signupPw, masterPw, onSavePasswords }) {
+  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(stores || [])));
+  const [name, setName] = useState('');
+  const [pw1, setPw1] = useState(signupPw || '');
+  const [pw2, setPw2] = useState(masterPw || '');
+  const [pwMsg, setPwMsg] = useState('');
+  const dirty = JSON.stringify(draft) !== JSON.stringify(stores);
+  const countOf = n => members.filter(m => (m.store || '') === n).length;
+
+  function set(i, patch) { setDraft(d => d.map((s, k) => k === i ? { ...s, ...patch } : s)); }
+  function rename(i, next) {
+    const before = draft[i].name;
+    set(i, { name: next });
+    // 店舗名を変えたら、その店舗のスタッフも一緒に動かす
+    if (before && next && before !== next) onSaveMembers(members.map(m => m.store === before ? { ...m, store: next } : m));
+  }
+  function del(i) {
+    const s = draft[i];
+    if (countOf(s.name) > 0) { alert(`${s.name}には${countOf(s.name)}名います。先に別の店舗へ移してください。`); return; }
+    if (!confirm(`店舗「${s.name}」を消します。メニューの表も見えなくなります。よろしいですか。`)) return;
+    setDraft(d => d.filter((_, k) => k !== i));
+  }
+  function add() {
+    const n = name.trim();
+    if (!n) return;
+    if (draft.some(s => s.name === n)) { alert('同じ店舗があります'); return; }
+    setDraft(d => [...d, { name: n, pw: '' }]);
+    setName('');
+  }
+
+  return (
+    <>
+      <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
+        店舗ごとのパスワードを入れておくと、その店舗の管理者は自分の店舗だけを見られます。空欄なら誰も入れません。
+      </div>
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>
+        <div style={{ padding:'11px 14px', background:C.soft, fontSize:'13px', fontWeight:700 }}>
+          店舗<span style={{ fontSize:'11px', color:C.mute, fontWeight:500, marginLeft:'8px' }}>{draft.length}件</span>
+        </div>
+        {draft.map((s, i) => (
+          <div key={i} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 12px', borderTop:'1px solid #F7F4EE', flexWrap:'wrap' }}>
+            <input value={s.name} onChange={e => rename(i, e.target.value)}
+              style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', fontWeight:700 }} />
+            <span style={{ fontSize:'11px', color:C.mute, width:'42px', textAlign:'right' }}>{countOf(s.name)}名</span>
+            <input value={s.pw || ''} onChange={e => set(i, { pw: e.target.value })} placeholder="この店舗のパスワード"
+              style={{ flex:'1 1 150px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
+            <button onClick={() => del(i)} title="削除"
+              style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+        <div style={{ display:'flex', gap:'8px', padding:'11px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
+          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="新しい店舗の名前"
+            style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+          <button onClick={add}
+            style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
+            <Plus size={13} /> 追加
+          </button>
+        </div>
+      </div>
+
+      <SaveBar dirty={dirty} saving={saving} onSave={() => onSave(draft)} onReset={() => setDraft(JSON.parse(JSON.stringify(stores)))} />
+
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginTop:'16px' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'10px' }}>
-          <Lock size={13} /> パスワード
+          <Lock size={13} /> 全体のパスワード
         </div>
         <div style={{ fontSize:'11px', color:C.mute, lineHeight:1.8, marginBottom:'10px' }}>
-          合言葉は、はじめて登録するときに一度だけ聞きます。空欄にすると誰でも登録できます。<br />
-          管理者のパスワードを空欄にすると、この画面が誰でも開けるようになります。
+          合言葉は、スタッフがはじめて登録するときに一度だけ聞きます。空欄にすると誰でも登録できます。<br />
+          総管理者のパスワードは全店のデータを開くためのものです。
         </div>
         <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'8px' }}>登録の合言葉
           <input type="text" value={pw1} onChange={e => { setPw1(e.target.value); setPwMsg(''); }}
             style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
         </label>
-        <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>管理者のパスワード
+        <label style={{ display:'block', fontSize:'11px', fontWeight:600, color:C.mute, marginBottom:'10px' }}>総管理者のパスワード
           <input type="text" value={pw2} onChange={e => { setPw2(e.target.value); setPwMsg(''); }}
             style={{ ...selStyle, width:'100%', marginTop:'4px', boxSizing:'border-box' }} />
         </label>

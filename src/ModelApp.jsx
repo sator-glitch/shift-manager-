@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVertical, Store } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVertical, Store, Copy } from 'lucide-react';
 
 // ===========================================================================
 // モデル実績管理
@@ -18,7 +18,7 @@ import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVer
 // ===========================================================================
 
 const STORES_KEY   = 'model_stores_v1';     // [{name, pw, sameAs}] sameAs=メンバーを借りる店舗
-const MENUS_KEY    = 'model_menus_v1';      // { 店舗名: [{id,name,cost,category}] }
+const MENUS_KEY    = 'model_menus_v1';      // { 店舗名: [{id,name,cost}] }
 const MEMBERS_KEY  = 'model_members_v1';    // [{id,name,cohort,store,pin}]
 const RECORDS_KEY  = 'model_records_v1';    // { recId: {...} }
 const MASTER_PW_KEY = 'model_master_pw_v1';
@@ -537,13 +537,6 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
   const [date, setDate] = useState(rec.date || today());
   const [picked, setPicked] = useState(rec.menuIds || []);
   const cost = picked.reduce((n, id) => n + (((menus || []).find(m => m.id === id) || {}).cost || 0), 0);
-  const byCat = [];
-  (menus || []).forEach(m => {
-    const cat = m.category || 'メニュー';
-    let g = byCat.find(x => x.cat === cat);
-    if (!g) { g = { cat, items: [] }; byCat.push(g); }
-    g.items.push(m);
-  });
   function toggle(id) { setPicked(p => p.indexOf(id) >= 0 ? p.filter(x => x !== id) : [...p, id]); }
 
   return (
@@ -561,11 +554,9 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
           <div style={{ fontSize:'12px', color:C.ng, lineHeight:1.7 }}>
             この店舗のメニューがまだ登録されていません。管理者に登録してもらってください。
           </div>
-        ) : byCat.map(g => (
-          <div key={g.cat} style={{ marginBottom:'10px' }}>
-            <div style={{ fontSize:'11px', color:C.mute, fontWeight:700, marginBottom:'6px' }}>{g.cat}</div>
-            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
-              {g.items.map(m => {
+        ) : (
+          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+            {(menus || []).map(m => {
                 const on = picked.indexOf(m.id) >= 0;
                 return (
                   <button key={m.id} onClick={() => toggle(m.id)}
@@ -577,10 +568,9 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
                     <span style={{ fontSize:'10px', marginLeft:'7px', opacity:0.75 }}>{yen(m.cost)}</span>
                   </button>
                 );
-              })}
-            </div>
+            })}
           </div>
-        ))}
+        )}
       </div>
 
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', borderRadius:'11px', background:C.soft, marginBottom:'14px' }}>
@@ -670,16 +660,20 @@ function RankTable({ rows, showStore }) {
   );
 }
 
-function MenuBreakdown({ inMonth, menus, showStore }) {
+function menuRowsOf(inMonth, menus) {
   const count = {};
-  inMonth.forEach(r => (r.menuIds || []).forEach(id => {
+  (inMonth || []).forEach(r => (r.menuIds || []).forEach(id => {
     const st = r.store || '';
-    const mm = (menus[st] || []).find(x => x.id === id);
+    const mm = ((menus || {})[st] || []).find(x => x.id === id);
     const key = (mm ? mm.name : '（消されたメニュー）') + '|' + st;
     const e = count[key] || (count[key] = { name: mm ? mm.name : '（消されたメニュー）', store: st, n:0, cost:0 });
     e.n += 1; e.cost += (mm ? (mm.cost || 0) : 0);
   }));
-  const rows = Object.values(count).sort((a, b) => b.n - a.n);
+  return Object.values(count).sort((a, b) => b.n - a.n);
+}
+
+function MenuBreakdown({ inMonth, menus, showStore }) {
+  const rows = menuRowsOf(inMonth, menus);
   if (rows.length === 0) return null;
   return (
     <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginTop:'14px' }}>
@@ -691,6 +685,73 @@ function MenuBreakdown({ inMonth, menus, showStore }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// AIに読ませて資料にするための、ひと月分のテキスト
+function monthReportText({ ym, all, perStore, menus, members }) {
+  const L = [];
+  L.push(`# モデル実績 ${fmtMonth(ym)}（全店）`);
+  L.push('');
+  L.push(`のべ人数: ${all.inMonth.length}人`);
+  L.push(`やった人: ${all.done.length}／${members.length}名`);
+  L.push(`材料費の合計: ${yen(all.cost)}`);
+  L.push('');
+  L.push('## 全店ランキング（やった人数順）');
+  if (all.done.length === 0) L.push('この月の記録はまだありません');
+  all.done.forEach((r, i) => L.push(`${i + 1}. ${r.name}（${r.store || '店舗なし'}） ${r.n}人 ${yen(r.cost)}`));
+  L.push('');
+  L.push('## 各店の集計');
+  L.push('店舗 / のべ人数 / やった人 / 材料費');
+  perStore.forEach(s => L.push(`${s.name} / ${s.n}人 / ${s.done}／${s.staff}名 / ${yen(s.cost)}`));
+  const mr = menuRowsOf(all.inMonth, menus);
+  if (mr.length > 0) {
+    L.push('');
+    L.push('## メニュー別');
+    mr.forEach(m => L.push(`${m.name}（${m.store || '店舗なし'}） ${m.n}件 ${yen(m.cost)}`));
+  }
+  const none = all.rows.filter(r => r.n === 0);
+  if (none.length > 0) {
+    L.push('');
+    L.push(`## この月に記録がない人（${none.length}名）`);
+    L.push(none.map(r => `${r.name}（${r.store || '店舗なし'}）`).join('、'));
+  }
+  L.push('');
+  L.push('※ 1件 = モデル1人。同じ人が2回来たら2件。');
+  L.push('※ 同じ人数の場合の順位は並び順のまま。');
+  L.push('※ 材料費の合計は記録した時点の金額。メニュー別は今の金額×件数。');
+  return L.join('\n');
+}
+
+function CopyButton({ text, label }) {
+  const [msg, setMsg] = useState('');
+  async function go() {
+    const t = typeof text === 'function' ? text() : text;
+    let ok = false;
+    try { await navigator.clipboard.writeText(t); ok = true; } catch (e) {}
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = t;
+        ta.style.position = 'fixed'; ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e) {}
+    }
+    setMsg(ok ? 'コピーしました' : 'コピーできませんでした');
+    setTimeout(() => setMsg(''), 2500);
+  }
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:'8px' }}>
+      <button onClick={go}
+        style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'9px 14px', borderRadius:'9px',
+          border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:700, cursor:'pointer' }}>
+        <Copy size={13} /> {label}
+      </button>
+      {msg && <span style={{ fontSize:'11px', color: msg === 'コピーしました' ? C.ok : C.ng }}>{msg}</span>}
+    </span>
   );
 }
 
@@ -824,9 +885,16 @@ function MasterPage({ stores, members, menus, records, saving, masterPw,
       </div>
 
       {tab === 'rank' && (<>
-        <select value={ym} onChange={e => setYm(e.target.value)} style={{ ...selStyle, marginBottom:'12px' }}>
-          {months.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
-        </select>
+        <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
+          <select value={ym} onChange={e => setYm(e.target.value)} style={selStyle}>
+            {months.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
+          </select>
+          <CopyButton label="この月の全ランキングをコピー"
+            text={() => monthReportText({ ym, all, perStore, menus, members })} />
+        </div>
+        <div style={{ fontSize:'11px', color:C.mute, marginBottom:'14px', lineHeight:1.7 }}>
+          コピーすると、この月の全店ランキング・各店の集計・メニュー別・記録がない人がまとめてテキストになります。そのままAIに貼って資料にできます。
+        </div>
 
         <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'14px' }}>
           <Stat label="のべ人数" value={all.inMonth.length + '人'} big />
@@ -915,7 +983,6 @@ function MenuEditor({ store, menus, onSave, saving }) {
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(menus || [])));
   const [name, setName] = useState('');
   const [cost, setCost] = useState('');
-  const [cat, setCat] = useState('');
   const [drag, setDrag] = useState(null);
   const [over, setOver] = useState(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(menus);
@@ -930,7 +997,7 @@ function MenuEditor({ store, menus, onSave, saving }) {
     if (!n) return;
     if (draft.some(m => m.name === n)) { alert('同じ名前のメニューがあります'); return; }
     const c = Number(toHalfDigits(costOverride === undefined ? cost : costOverride)) || 0;
-    setDraft(d => [...d, { id: uid(), name: n, cost: c, category: cat.trim() }]);
+    setDraft(d => [...d, { id: uid(), name: n, cost: c }]);
     setName(''); setCost('');
   }
   function dropOn(id) {
@@ -970,8 +1037,6 @@ function MenuEditor({ store, menus, onSave, saving }) {
             <span style={grip} onMouseDown={() => setDrag(m.id)} onMouseUp={() => setDrag(null)} onDragStart={() => setDrag(m.id)}>
               <GripVertical size={15} />
             </span>
-            <input value={m.category || ''} onChange={e => set(m.id, { category: e.target.value })} placeholder="区分"
-              style={{ flex:'0 0 88px', minWidth:0, padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
             <input value={m.name} onChange={e => set(m.id, { name: e.target.value })}
               style={{ flex:'1 1 100px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
             <div style={{ display:'flex', alignItems:'center', gap:'3px', flexShrink:0 }}>
@@ -986,8 +1051,6 @@ function MenuEditor({ store, menus, onSave, saving }) {
           </div>
         ))}
         <div style={{ display:'flex', alignItems:'center', gap:'7px', padding:'11px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5', flexWrap:'wrap' }}>
-          <input value={cat} onChange={e => setCat(e.target.value)} placeholder="区分"
-            style={{ flex:'0 0 88px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
           <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} placeholder="メニュー名"
             style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
           <NumInput value={cost} placeholder="材料費" width="88px"

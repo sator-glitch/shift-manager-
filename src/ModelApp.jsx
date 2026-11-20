@@ -413,7 +413,7 @@ function StaffPickView({ store, stores, members, onSignIn, onSaveMembers, onBack
           <div style={{ marginBottom:'12px' }}>
             <label style={lbl}>パスワード<span style={{ fontWeight:500, color:C.mute, marginLeft:'6px' }}>4桁の数字</span></label>
             <input type="password" inputMode="numeric" maxLength={4} value={pin} autoFocus
-              onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setMsg(''); }}
+              onChange={e => { setPin(toHalfDigits(e.target.value).slice(0, 4)); setMsg(''); }}
               onKeyDown={e => e.key === 'Enter' && !isNew && go()} style={inp} />
           </div>
 
@@ -421,7 +421,7 @@ function StaffPickView({ store, stores, members, onSignIn, onSaveMembers, onBack
             <div style={{ marginBottom:'12px' }}>
               <label style={lbl}>パスワード再入力</label>
               <input type="password" inputMode="numeric" maxLength={4} value={pin2}
-                onChange={e => { setPin2(e.target.value.replace(/\D/g, '')); setMsg(''); }}
+                onChange={e => { setPin2(toHalfDigits(e.target.value).slice(0, 4)); setMsg(''); }}
                 onKeyDown={e => e.key === 'Enter' && go()} style={inp} />
             </div>
           )}
@@ -885,6 +885,32 @@ function MasterPage({ stores, members, menus, records, saving, masterPw,
 }
 
 // ─── メニューと材料費（店舗ごと）────────────────────────────────
+const toHalfDigits = v => String(v == null ? '' : v)
+  .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+  .replace(/[^0-9]/g, '');
+
+// 数字入力。日本語入力(IME)が全角のままでも打てるようにしている
+function NumInput({ value, onChange, onEnter, placeholder, width, align }) {
+  const [raw, setRaw] = useState(null);
+  const shown = raw !== null ? raw : (value === '' || value === null || value === undefined ? '' : String(value));
+  function commit(v) {
+    setRaw(null);
+    const d = toHalfDigits(v);
+    const next = d === '' ? '' : Number(d);
+    onChange(next);
+    return next;
+  }
+  return (
+    <input value={shown} inputMode="numeric" placeholder={placeholder}
+      onFocus={e => e.target.select()}
+      onChange={e => { const v = e.target.value; if (v !== toHalfDigits(v)) setRaw(v); else commit(v); }}
+      onCompositionEnd={e => commit(e.target.value)}
+      onBlur={e => commit(raw !== null ? raw : e.target.value)}
+      onKeyDown={e => { if (e.key === 'Enter') { const n = commit(e.currentTarget.value); if (onEnter) onEnter(n); } }}
+      style={{ width: width || '78px', flexShrink:0, padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign: align || 'right' }} />
+  );
+}
+
 function MenuEditor({ store, menus, onSave, saving }) {
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(menus || [])));
   const [name, setName] = useState('');
@@ -899,11 +925,12 @@ function MenuEditor({ store, menus, onSave, saving }) {
     if (!confirm(`「${m.name}」を消します。すでに記録に使われている分は、その記録に残った金額のままです。よろしいですか。`)) return;
     setDraft(d => d.filter(x => x.id !== m.id));
   }
-  function add() {
+  function add(costOverride) {
     const n = name.trim();
     if (!n) return;
     if (draft.some(m => m.name === n)) { alert('同じ名前のメニューがあります'); return; }
-    setDraft(d => [...d, { id: uid(), name: n, cost: Number(cost) || 0, category: cat.trim() }]);
+    const c = Number(toHalfDigits(costOverride === undefined ? cost : costOverride)) || 0;
+    setDraft(d => [...d, { id: uid(), name: n, cost: c, category: cat.trim() }]);
     setName(''); setCost('');
   }
   function dropOn(id) {
@@ -949,8 +976,8 @@ function MenuEditor({ store, menus, onSave, saving }) {
               style={{ flex:'1 1 100px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
             <div style={{ display:'flex', alignItems:'center', gap:'3px', flexShrink:0 }}>
               <span style={{ fontSize:'12px', color:C.mute }}>¥</span>
-              <input value={m.cost} inputMode="numeric" onChange={e => set(m.id, { cost: Number(e.target.value.replace(/\D/g, '')) || 0 })}
-                style={{ width:'72px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
+              <NumInput value={m.cost} placeholder="0" width="78px"
+                onChange={v => set(m.id, { cost: v })} />
             </div>
             <button onClick={() => del(m)} title="削除"
               style={{ flexShrink:0, width:'32px', height:'32px', borderRadius:'8px', border:`1px solid ${C.line}`, background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -961,18 +988,20 @@ function MenuEditor({ store, menus, onSave, saving }) {
         <div style={{ display:'flex', alignItems:'center', gap:'7px', padding:'11px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5', flexWrap:'wrap' }}>
           <input value={cat} onChange={e => setCat(e.target.value)} placeholder="区分"
             style={{ flex:'0 0 88px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'12px' }} />
-          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="メニュー名"
+          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} placeholder="メニュー名"
             style={{ flex:'1 1 110px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
-          <input value={cost} inputMode="numeric" onChange={e => setCost(e.target.value.replace(/\D/g, ''))} onKeyDown={e => e.key === 'Enter' && add()} placeholder="材料費"
-            style={{ width:'82px', padding:'8px 9px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px', textAlign:'right' }} />
-          <button onClick={add}
+          <NumInput value={cost} placeholder="材料費" width="88px"
+            onChange={setCost} onEnter={v => add(v)} />
+          <button onClick={() => add()}
             style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
             <Plus size={13} /> 追加
           </button>
         </div>
       </div>
 
-      <SaveBar dirty={dirty} saving={saving} onSave={() => onSave(draft)} onReset={() => setDraft(JSON.parse(JSON.stringify(menus)))} />
+      <SaveBar dirty={dirty} saving={saving}
+        onSave={() => onSave(draft.map(m => ({ ...m, cost: Number(m.cost) || 0 })))}
+        onReset={() => setDraft(JSON.parse(JSON.stringify(menus)))} />
     </>
   );
 }
@@ -1126,7 +1155,7 @@ function StoreAdmin({ stores, members, saving, onSave, onSaveMembers, masterPw, 
           </div>
         ))}
         <div style={{ display:'flex', gap:'8px', padding:'11px 12px', borderTop:`1px solid ${C.line}`, background:'#FBF9F5' }}>
-          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="新しい店舗の名前"
+          <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }} placeholder="新しい店舗の名前"
             style={{ flex:1, minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
           <button onClick={add}
             style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none', background:C.text, color:'#FFF', fontSize:'12px', fontWeight:600, cursor:'pointer' }}>

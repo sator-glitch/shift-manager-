@@ -1014,7 +1014,7 @@ function MenuEditor({ store, menus, onSave, saving }) {
     <>
       <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
         <b style={{ color:C.text }}>{store}</b> のメニューです。ここで登録したものが、この店舗のスタッフの記録画面に出ます。<br />
-        材料費はメニューごとの固定額。並べ替えは左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をドラッグ。区分を入れるとまとまって表示されます。
+        材料費はメニューごとの固定額。並べ替えは左の <GripVertical size={12} style={{ verticalAlign:'-2px' }} /> をドラッグ。
       </div>
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', overflow:'hidden', marginBottom:'14px' }}>

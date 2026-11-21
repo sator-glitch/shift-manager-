@@ -11,3 +11,4 @@ vite.config.js.timestamp-*
 # macOSが勝手に作るファイル
 .DS_Store
 /GitHubログインやり直し.command
+/_push_log.txt

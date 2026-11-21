@@ -535,9 +535,18 @@ function MeView({ me, workStore, menus, records, saving, onSave, onRemove, onBac
 
 function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
   const [date, setDate] = useState(rec.date || today());
-  const [picked, setPicked] = useState(rec.menuIds || []);
-  const cost = picked.reduce((n, id) => n + (((menus || []).find(m => m.id === id) || {}).cost || 0), 0);
-  function toggle(id) { setPicked(p => p.indexOf(id) >= 0 ? p.filter(x => x !== id) : [...p, id]); }
+  // メニューは1件ずつプルダウンで選ぶ。2つ目以降は「メニューを追加」で増やす
+  const [picked, setPicked] = useState(() => {
+    const ids = (rec.menuIds || []).filter(Boolean);
+    return ids.length > 0 ? ids : [''];
+  });
+  const chosen = picked.filter(Boolean);
+  const costOf = id => (((menus || []).find(m => m.id === id) || {}).cost || 0);
+  const cost = chosen.reduce((n, id) => n + costOf(id), 0);
+
+  function setAt(i, id) { setPicked(p => p.map((x, k) => k === i ? id : x)); }
+  function removeAt(i) { setPicked(p => (p.length <= 1 ? [''] : p.filter((x, k) => k !== i))); }
+  function addSlot() { setPicked(p => [...p, '']); }
 
   return (
     <>
@@ -549,27 +558,41 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
 
       <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'14px', marginBottom:'12px' }}>
         <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'2px' }}>メニュー</div>
-        <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px' }}>やったものを全部押してください。材料費は自動で足されます。</div>
+        <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px' }}>
+          やったメニューを選んでください。2つ以上やったときは「メニューを追加」で増やせます。材料費は自動で足されます。
+        </div>
         {(menus || []).length === 0 ? (
           <div style={{ fontSize:'12px', color:C.ng, lineHeight:1.7 }}>
             この店舗のメニューがまだ登録されていません。管理者に登録してもらってください。
           </div>
         ) : (
-          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
-            {(menus || []).map(m => {
-                const on = picked.indexOf(m.id) >= 0;
-                return (
-                  <button key={m.id} onClick={() => toggle(m.id)}
-                    style={{ padding:'9px 13px', borderRadius:'10px', cursor:'pointer',
-                      border: on ? 'none' : `1px solid ${C.line}`,
-                      background: on ? C.text : '#FFF', color: on ? '#FFF' : C.text,
-                      fontSize:'13px', fontWeight: on ? 700 : 500, textAlign:'left' }}>
-                    {m.name}
-                    <span style={{ fontSize:'10px', marginLeft:'7px', opacity:0.75 }}>{yen(m.cost)}</span>
+          <>
+            {picked.map((id, i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:'7px', marginBottom:'8px' }}>
+                <select value={id} onChange={e => setAt(i, e.target.value)}
+                  style={{ ...selStyle, flex:'1 1 auto', minWidth:0 }}>
+                  <option value="">選んでください</option>
+                  {(menus || []).map(m => (
+                    <option key={m.id} value={m.id}>{m.name}（{yen(m.cost)}）</option>
+                  ))}
+                </select>
+                {picked.length > 1 && (
+                  <button onClick={() => removeAt(i)} title="この行を消す"
+                    style={{ flexShrink:0, width:'34px', height:'34px', borderRadius:'9px', border:`1px solid ${C.line}`,
+                      background:'#FFF', color:C.ng, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <X size={14} />
                   </button>
-                );
-            })}
-          </div>
+                )}
+              </div>
+            ))}
+            <button onClick={addSlot} disabled={picked.some(x => !x)}
+              style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 14px', borderRadius:'9px',
+                border:`1px dashed ${C.line}`, background:'#FFF', color: picked.some(x => !x) ? C.mute : C.text,
+                fontSize:'12px', fontWeight:600, cursor: picked.some(x => !x) ? 'default' : 'pointer',
+                opacity: picked.some(x => !x) ? 0.5 : 1 }}>
+              <Plus size={13} /> メニューを追加
+            </button>
+          </>
         )}
       </div>
 
@@ -589,11 +612,11 @@ function RecordForm({ rec, menus, saving, onCancel, onSave, onDelete }) {
             <Trash2 size={14} /> 消す
           </button>
         )}
-        <button onClick={() => onSave({ ...rec, date, menuIds: picked, cost, updatedAt: new Date().toISOString() })}
-          disabled={saving || picked.length === 0}
+        <button onClick={() => onSave({ ...rec, date, menuIds: chosen, cost, updatedAt: new Date().toISOString() })}
+          disabled={saving || chosen.length === 0}
           style={{ flex:1, minWidth:'120px', padding:'12px 20px', borderRadius:'10px', border:'none',
-            background: picked.length === 0 ? '#D8D2C6' : C.text, color:'#FFF', fontSize:'13px', fontWeight:700,
-            cursor: picked.length === 0 ? 'default' : 'pointer' }}>
+            background: chosen.length === 0 ? '#D8D2C6' : C.text, color:'#FFF', fontSize:'13px', fontWeight:700,
+            cursor: chosen.length === 0 ? 'default' : 'pointer' }}>
           {saving ? '保存中…' : '保存する'}
         </button>
       </div>

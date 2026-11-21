@@ -7,3 +7,6 @@ vite.config.js.timestamp-*
 
 # ダブルクリックでpushするスクリプト（手元だけで使う）
 /push.command
+
+# macOSが勝手に作るファイル
+.DS_Store

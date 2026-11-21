@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronLeft, Plus, Trash2, Lock, BarChart2, Users, Calendar, X, GripVertical, Store, Copy } from 'lucide-react';
 
 // ===========================================================================
-// モデル実績管理
+// モデル代管理
 //
 // アシスタントが営業後にやったモデルを、本人が記録する。
 //   ・1モデル＝1件。同じ人が2回来たら2件（延べ回数）
@@ -295,7 +295,7 @@ function StorePickView({ stores, members, me, workStore, onPick, onMe, onAdmin }
   const noStore = members.filter(m => !m.store);
   return (
     <>
-      <h1 style={{ fontSize:'21px', fontWeight:700, margin:'0 0 4px', color:C.text, letterSpacing:'0.02em' }}>モデル実績</h1>
+      <h1 style={{ fontSize:'21px', fontWeight:700, margin:'0 0 4px', color:C.text, letterSpacing:'0.02em' }}>モデル代管理</h1>
       <div style={{ fontSize:'13px', color:C.mute, marginBottom:'22px' }}>店舗を選んでください</div>
 
       {me && (
@@ -691,7 +691,7 @@ function MenuBreakdown({ inMonth, menus, showStore }) {
 // AIに読ませて資料にするための、ひと月分のテキスト
 function monthReportText({ ym, all, perStore, menus, members }) {
   const L = [];
-  L.push(`# モデル実績 ${fmtMonth(ym)}（全店）`);
+  L.push(`# モデル代管理 ${fmtMonth(ym)}（全店）`);
   L.push('');
   L.push(`のべ人数: ${all.inMonth.length}人`);
   L.push(`やった人: ${all.done.length}／${members.length}名`);
@@ -1070,8 +1070,13 @@ function MenuEditor({ store, menus, onSave, saving }) {
 }
 
 // ─── 名簿 ───────────────────────────────────────────────────────
-function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, onSave, onSeed, poolNote }) {
+function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, onSave, onSeed, poolNote, fixedStore }) {
   const [impMsg, setImpMsg] = useState('');
+  const [nName, setNName] = useState('');
+  const [nCohort, setNCohort] = useState('');
+  const [nCohortNew, setNCohortNew] = useState('');
+  const [nStore, setNStore] = useState(fixedStore || '');
+  const [addMsg, setAddMsg] = useState('');
   const used = {};
   Object.values(records || {}).forEach(r => { used[r.memberId] = (used[r.memberId] || 0) + 1; });
 
@@ -1087,6 +1092,18 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
   }
 
   const cohorts = [...new Set(members.map(m => m.cohort))].sort();
+  const allCohorts = [...new Set((allMembers || []).map(m => m.cohort).filter(Boolean))].sort();
+
+  function addOne() {
+    const n = nName.trim();
+    if (!n) { setAddMsg('名前を入れてください'); return; }
+    if ((allMembers || []).some(m => m.name === n)) { setAddMsg(`${n}さんはすでに名簿にいます`); return; }
+    const cohort = (nCohort === '__new' ? nCohortNew.trim() : nCohort) || '入社年なし';
+    const store = fixedStore !== undefined && fixedStore !== null && fixedStore !== '' ? fixedStore : nStore;
+    onSave([...(allMembers || []), { id: uid(), name: n, cohort, store: store || '', pin: null }]);
+    setNName(''); setNCohortNew('');
+    setAddMsg(`${n}さんを追加しました（${cohort}${store ? '・' + store : '・店舗なし'}）`);
+  }
 
   return (
     <>
@@ -1097,6 +1114,45 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
             <Plus size={13} /> カリキュラムから取り込む（2025・2026年入社）
           </button>
           {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
+        </div>
+      )}
+      {isMaster && (
+        <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'13px 14px', marginBottom:'14px' }}>
+          <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'3px' }}>個別に追加</div>
+          <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            カリキュラムにいない人もここから入れられます。パスワードは本人が初めて開いたときに決めます。
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap' }}>
+            <input value={nName} onChange={e => { setNName(e.target.value); setAddMsg(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') addOne(); }} placeholder="名前"
+              style={{ flex:'1 1 130px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+            <select value={nCohort} onChange={e => { setNCohort(e.target.value); setAddMsg(''); }}
+              style={{ ...selStyle, flex:'0 0 142px', padding:'8px 6px', fontSize:'12px' }}>
+              <option value="">入社年なし</option>
+              {allCohorts.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__new">その他（入力）</option>
+            </select>
+            {nCohort === '__new' && (
+              <input value={nCohortNew} onChange={e => setNCohortNew(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addOne(); }} placeholder="2027年入社"
+                style={{ flex:'0 0 120px', padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
+            )}
+            {fixedStore ? (
+              <span style={{ fontSize:'12px', color:C.mute }}>{fixedStore}</span>
+            ) : (
+              <select value={nStore} onChange={e => setNStore(e.target.value)}
+                style={{ ...selStyle, flex:'0 0 128px', padding:'8px 6px', fontSize:'12px' }}>
+                <option value="">店舗なし</option>
+                {stores.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+              </select>
+            )}
+            <button onClick={addOne} disabled={saving}
+              style={{ flexShrink:0, display:'flex', alignItems:'center', gap:'4px', padding:'8px 14px', borderRadius:'8px', border:'none',
+                background:C.text, color:'#FFF', fontSize:'12px', fontWeight:700, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.5 : 1 }}>
+              <Plus size={13} /> 追加
+            </button>
+          </div>
+          {addMsg && <div style={{ fontSize:'11px', color: addMsg.includes('追加しました') ? C.ok : C.ng, marginTop:'8px' }}>{addMsg}</div>}
         </div>
       )}
       {!isMaster && (

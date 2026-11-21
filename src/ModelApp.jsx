@@ -820,6 +820,7 @@ function StoreAdminPage({ store, stores, members, menus, records, saving,
       {tab === 'members' && (
         <MemberAdmin members={staff} allMembers={members} stores={stores} records={records}
           poolNote={pool !== store ? `${store} は ${pool} と同じメンバーです` : ''}
+          fixedStore={pool}
           isMaster={false} saving={saving} onSave={onSaveMembers} onSeed={null} />
       )}
 
@@ -1097,7 +1098,8 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
   function addOne() {
     const n = nName.trim();
     if (!n) { setAddMsg('名前を入れてください'); return; }
-    if ((allMembers || []).some(m => m.name === n)) { setAddMsg(`${n}さんはすでに名簿にいます`); return; }
+    const dup = (allMembers || []).find(m => m.name === n);
+    if (dup) { setAddMsg(`${n}さんはすでに名簿にいます（${dup.store || '店舗なし'}）`); return; }
     const cohort = (nCohort === '__new' ? nCohortNew.trim() : nCohort) || '入社年なし';
     const store = fixedStore !== undefined && fixedStore !== null && fixedStore !== '' ? fixedStore : nStore;
     onSave([...(allMembers || []), { id: uid(), name: n, cohort, store: store || '', pin: null }]);
@@ -1116,15 +1118,18 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
           {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
         </div>
       )}
-      {isMaster && (
-        <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'13px 14px', marginBottom:'14px' }}>
+      <div style={{ background:C.card, border:`1px solid ${C.line}`, borderRadius:'12px', padding:'13px 14px', marginBottom:'14px' }}>
           <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:'3px' }}>個別に追加</div>
+          <div style={{ fontSize:'12px', color:C.ng, fontWeight:700, marginBottom:'4px', lineHeight:1.7 }}>
+            名前は必ずフルネーム（姓と名）で入れてください。
+          </div>
           <div style={{ fontSize:'11px', color:C.mute, marginBottom:'10px', lineHeight:1.7 }}>
+            下の名前だけだと同じ名前の人と区別がつかず、集計やランキングで混ざります。
             カリキュラムにいない人もここから入れられます。パスワードは本人が初めて開いたときに決めます。
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap' }}>
             <input value={nName} onChange={e => { setNName(e.target.value); setAddMsg(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') addOne(); }} placeholder="名前"
+              onKeyDown={e => { if (e.key === 'Enter') addOne(); }} placeholder="名前（フルネーム）"
               style={{ flex:'1 1 130px', minWidth:0, padding:'8px 10px', borderRadius:'8px', border:`1px solid ${C.line}`, fontSize:'13px' }} />
             <select value={nCohort} onChange={e => { setNCohort(e.target.value); setAddMsg(''); }}
               style={{ ...selStyle, flex:'0 0 142px', padding:'8px 6px', fontSize:'12px' }}>
@@ -1153,11 +1158,10 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
             </button>
           </div>
           {addMsg && <div style={{ fontSize:'11px', color: addMsg.includes('追加しました') ? C.ok : C.ng, marginTop:'8px' }}>{addMsg}</div>}
-        </div>
-      )}
+      </div>
       {!isMaster && (
         <div style={{ fontSize:'12px', color:C.mute, lineHeight:1.8, marginBottom:'12px' }}>
-          この店舗のスタッフです。店舗の移動や名簿の追加は総管理者が行います。
+          この店舗のスタッフです。ほかの店舗への移動と、名簿から外すのは総管理者が行います。
         </div>
       )}
       {poolNote && (

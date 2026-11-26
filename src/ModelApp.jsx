@@ -25,7 +25,7 @@ const MASTER_PW_KEY = 'model_master_pw_v1';
 const CURRICULUM_KEY = 'curriculum_v2';
 const LOCAL_ME = 'model_app_me';
 
-const TARGET_COHORTS = ['2025年入社', '2026年入社'];
+const TARGET_COHORTS = ['2024年入社', '2025年入社', '2026年入社'];
 const DEFAULT_STORES = ['本店', 'Journey', 'SHIBUYA', 'GINZA', 'GINZA U', 'KICHIJOJI', 'KAMAKURA'];
 // GINZA U は GINZA と同じメンバーを使う（メニューと集計は別）
 const DEFAULT_SAME_AS = { 'GINZA U': 'GINZA' };
@@ -1136,7 +1136,7 @@ function MemberAdmin({ members, allMembers, stores, records, isMaster, saving, o
         <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', marginBottom:'12px' }}>
           <button onClick={async () => { const r = await onSeed(); setImpMsg(r.added > 0 ? `${r.added}名を追加しました：${r.names.join('、')}` : '新しく追加する人はいませんでした'); }}
             style={{ display:'flex', alignItems:'center', gap:'5px', padding:'9px 16px', borderRadius:'9px', border:`1px solid ${C.line}`, background:'#FFF', color:C.text, fontSize:'12px', fontWeight:600, cursor:'pointer' }}>
-            <Plus size={13} /> カリキュラムから取り込む（2025・2026年入社）
+            <Plus size={13} /> カリキュラムから取り込む（2024〜2026年入社）
           </button>
           {impMsg && <span style={{ fontSize:'11px', color:C.mute }}>{impMsg}</span>}
         </div>
